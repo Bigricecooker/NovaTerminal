@@ -1,0 +1,249 @@
+import { useEffect, useRef, useState } from 'react'
+import { EraserIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from 'lucide-react'
+import { Terminal, type ITheme } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { MAX_INPUT, SSH_START_TIMEOUT, TERMINAL_PATH, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '@/lib/terminal-protocol'
+import type { TerminalTarget } from '@/lib/terminal-tabs'
+
+type Phase = 'connecting' | 'verifying' | 'running' | 'closed' | 'error'
+type Session = { phase: Phase; detail: string; shell: string }
+type HostKey = Extract<ServerMessage, { type: 'host-key' }>
+type Controls = { terminal: Terminal; fit: () => void; clear: () => void; trust: (key: HostKey, accept: boolean) => void }
+
+const phaseLabels: Record<Phase, string> = {
+  connecting: '连接中', verifying: '待确认指纹', running: '运行中', closed: '已结束', error: '连接失败',
+}
+
+function terminalTheme(): ITheme {
+  const style = getComputedStyle(document.documentElement)
+  const color = (name: string) => style.getPropertyValue(`--terminal-${name}`).trim()
+  return {
+    background: color('background'), foreground: color('foreground'),
+    cursor: color('foreground'), cursorAccent: color('background'),
+    selectionBackground: color('selection'),
+    black: color('black'), red: color('red'), green: color('green'), yellow: color('yellow'),
+    blue: color('blue'), magenta: color('magenta'), cyan: color('cyan'), white: color('white'),
+    brightBlack: color('bright-black'), brightRed: color('red'), brightGreen: color('green'),
+    brightYellow: color('yellow'), brightBlue: color('blue'), brightMagenta: color('magenta'),
+    brightCyan: color('cyan'), brightWhite: color('foreground'),
+  }
+}
+
+export function TerminalSession({ dark, active, label, id, target, takeSshOptions }: {
+  dark: boolean; active: boolean; label: string; id: string; target: TerminalTarget
+  takeSshOptions: (id: string) => SshOptions | undefined
+}) {
+  const container = useRef<HTMLDivElement>(null)
+  const controls = useRef<Controls | null>(null)
+  const activeRef = useRef(active)
+  const [session, setSession] = useState<Session>({ phase: 'connecting', detail: target.kind === 'ssh' ? '正在连接 SSH 服务器…' : '正在启动本地 Shell…', shell: '' })
+  const [hostKey, setHostKey] = useState<HostKey | null>(null)
+  const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
+
+  useEffect(() => {
+    if (!container.current) return
+    const element = container.current
+    const terminal = new Terminal({
+      cursorBlink: true, fontFamily: 'Cascadia Mono, Consolas, Menlo, monospace',
+      fontSize: 14, lineHeight: 1.25, scrollback: 5_000,
+      theme: terminalTheme(), allowProposedApi: false,
+      allowTransparency: false, disableStdin: true,
+    })
+    const fit = new FitAddon()
+    terminal.loadAddon(fit)
+    terminal.open(element)
+
+    let disposed = false
+    let ended = false
+    let started = false
+    let ready = false
+    let frame = 0
+    let timeout = 0
+    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${TERMINAL_PATH}`)
+    const send = (message: ClientMessage) => {
+      if (!disposed && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+    }
+    const stop = (phase: 'closed' | 'error', detail: string) => {
+      if (disposed || ended) return
+      ended = true
+      ready = false
+      clearTimeout(timeout)
+      terminal.options.disableStdin = true
+      setHostKey(null)
+      setSession((current) => ({ ...current, phase, detail }))
+      socket.close()
+    }
+    const fitTerminal = () => {
+      if (disposed) return
+      const visible = element.clientWidth > 0 && element.clientHeight > 0
+      // A newly opened tab may already be in the background by the time WS opens.
+      // Start it with xterm's initial dimensions; fit once it becomes visible.
+      if (visible) fit.fit()
+      // FitAddon can propose dimensions beyond our protocol limits on very large displays.
+      const cols = Math.max(2, Math.min(500, terminal.cols))
+      const rows = Math.max(2, Math.min(300, terminal.rows))
+      if (cols !== terminal.cols || rows !== terminal.rows) terminal.resize(cols, rows)
+      setSize({ cols, rows })
+      if (socket.readyState !== WebSocket.OPEN || ended) return
+      if (!started) {
+        started = true
+        if (target.kind === 'ssh') {
+          const ssh = takeSshOptions(id)
+          if (!ssh) { stop('error', 'SSH 认证信息已释放，请新建连接。'); return }
+          send({ type: 'start', cols, rows, ssh })
+        } else send({ type: 'start', cols, rows })
+      } else if (ready && visible) {
+        send({ type: 'resize', cols, rows })
+      }
+    }
+    const scheduleFit = () => {
+      if (disposed) return
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(fitTerminal)
+    }
+    const observer = new ResizeObserver(scheduleFit)
+    observer.observe(element)
+    void document.fonts.ready.then(scheduleFit)
+    window.addEventListener('resize', scheduleFit)
+    const input = terminal.onData((data) => {
+      if (!ready || ended) return
+      // Bound a single paste so it cannot enqueue an unlimited amount of input.
+      if (data.length > 65_536 || socket.bufferedAmount > 65_536) {
+        stop('error', '输入超过缓冲限制，会话已关闭，请新建终端。')
+        return
+      }
+      for (let offset = 0; offset < data.length; offset += MAX_INPUT) {
+        send({ type: 'input', data: data.slice(offset, offset + MAX_INPUT) })
+      }
+    })
+    timeout = window.setTimeout(() => stop('error', '终端连接超时，请检查服务和网络后新建终端。'), target.kind === 'ssh' ? SSH_START_TIMEOUT + 5_000 : 12_000)
+    socket.onopen = fitTerminal
+    socket.onmessage = (event: MessageEvent<unknown>) => {
+      if (disposed || ended) return
+      const message = typeof event.data === 'string' ? parseServerMessage(event.data) : null
+      if (!message) { stop('error', '终端服务返回了无效消息。'); return }
+      switch (message.type) {
+        case 'host-key':
+          if (target.kind !== 'ssh' || message.host !== target.host || message.port !== target.port || ready) {
+            stop('error', 'SSH 主机指纹消息与会话不匹配。'); return
+          }
+          setHostKey(message)
+          setSession({ phase: 'verifying', detail: '请向服务器管理员核对主机指纹。', shell: '' })
+          break
+        case 'ready':
+          clearTimeout(timeout)
+          ready = true
+          terminal.options.disableStdin = false
+          setHostKey(null)
+          setSession({ phase: 'running', detail: target.kind === 'ssh' ? `SSH · ${target.host}:${target.port}` : '本地会话', shell: message.shell })
+          fitTerminal()
+          if (activeRef.current) terminal.focus()
+          break
+        case 'output':
+          // Confirm UTF-16 code units only after xterm has consumed the chunk.
+          terminal.write(message.data, () => {
+            if (!ended) send({ type: 'ack', count: message.data.length })
+          })
+          break
+        case 'exit': stop('closed', `Shell 已退出，退出码 ${message.code}。`); break
+        case 'error': stop('error', message.message); break
+      }
+    }
+    socket.onerror = () => stop('error', '无法连接本地终端服务，请确认本地服务正在运行后重试。')
+    socket.onclose = () => stop('closed', '连接已断开；可通过右上角图标新建终端。')
+    controls.current = {
+      terminal,
+      fit: scheduleFit,
+      trust: (key, accept) => {
+        send({ type: 'host-key-response', fingerprint: key.fingerprint, accept })
+        setHostKey(null)
+        if (accept) setSession({ phase: 'connecting', detail: '正在验证 SSH 身份…', shell: '' })
+        else stop('closed', '已拒绝主机指纹，连接已取消。')
+      },
+      clear: () => {
+        terminal.clear()
+        if (ready && !ended) send({ type: 'clear' })
+        terminal.focus()
+      },
+    }
+
+    return () => {
+      disposed = true
+      clearTimeout(timeout)
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      window.removeEventListener('resize', scheduleFit)
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onerror = null
+      socket.onclose = null
+      socket.close()
+      input.dispose()
+      terminal.dispose()
+      controls.current = null
+    }
+  }, [id, target, takeSshOptions])
+
+  useEffect(() => {
+    activeRef.current = active
+    if (!active) return
+    const frame = requestAnimationFrame(() => {
+      controls.current?.fit()
+      controls.current?.terminal.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [active])
+
+  useEffect(() => {
+    // App updates the root theme before paint; defer reading CSS tokens one frame.
+    const frame = requestAnimationFrame(() => {
+      if (controls.current) controls.current.terminal.options.theme = terminalTheme()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [dark])
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {target.kind === 'ssh' ? <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" /> : <TerminalIcon className="size-4 text-muted-foreground" aria-hidden="true" />}
+          <h2 className="truncate text-sm font-medium">{session.shell || label}</h2>
+          <Badge variant={session.phase === 'error' ? 'destructive' : 'secondary'}>{phaseLabels[session.phase]}</Badge>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => controls.current?.clear()}>
+          <EraserIcon data-icon="inline-start" />清屏
+        </Button>
+      </div>
+      {hostKey && (
+        <div className="shrink-0 p-4">
+          <Alert>
+            <ShieldCheckIcon />
+            <AlertTitle>首次连接 {hostKey.host}:{hostKey.port}</AlertTitle>
+            <AlertDescription className="flex flex-col gap-3">
+              <p>请通过可信渠道核对服务器的 SHA-256 主机指纹，确认后记录并连接。</p>
+              <code className="break-all select-all">{hostKey.fingerprint}</code>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => controls.current?.trust(hostKey, false)}>拒绝连接</Button>
+                <Button size="sm" onClick={() => controls.current?.trust(hostKey, true)}>信任并连接</Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1 bg-terminal-background">
+        <div ref={container} className="absolute inset-0 overflow-hidden p-3 sm:p-4" aria-label={`${label}输入输出`} />
+      </div>
+      <footer className="flex min-h-9 shrink-0 items-center justify-between gap-4 border-t px-4 py-2 text-xs text-muted-foreground">
+        <p role="status" aria-live="polite" className="min-w-0 break-all">{session.detail}</p>
+        <div className="flex shrink-0 items-center gap-4 font-mono tabular-nums">
+          {size && <span aria-label={`${size.cols} 列 ${size.rows} 行`}>{size.cols} × {size.rows}</span>}
+          <span className="hidden sm:inline">UTF-8</span>
+        </div>
+      </footer>
+    </section>
+  )
+}
