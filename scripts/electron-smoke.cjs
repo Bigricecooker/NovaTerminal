@@ -26,6 +26,9 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(preferences.nodeIntegration, false)
       assert.equal(preferences.contextIsolation, true)
       assert.equal(preferences.sandbox, true)
+      const visibleDeadline = Date.now() + 5_000
+      while (!window.isVisible()) { assert.ok(Date.now() < visibleDeadline, 'Desktop window must become visible'); await delay(30) }
+      assert.equal(window.isMinimized(), false)
       await wait('Boolean(document.querySelector(\'button[aria-label="新建本地终端"]\'))')
       assert.equal(await evaluate('typeof require'), 'undefined')
       assert.equal(await evaluate('typeof window.novaTerminal.send'), 'function')

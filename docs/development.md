@@ -16,6 +16,8 @@ npm run dev
 
 该命令编译主进程、preload 和会话进程，在 `127.0.0.1:5180` 启动桌面专用 Vite 页面，再打开 Electron。此模式不加载 WebSocket 终端插件。前端支持热更新；修改 `src/main/`、`src/preload/` 或会话服务后重启命令。启动器退出时请求应用清理会话并关闭自己创建的 Vite 服务。
 
+Windows 桌面启动使用 `windowsHide: false`。将 GUI 进程以隐藏方式启动，可能使首次 `BrowserWindow.show()` 后窗口仍不可见，即使页面已加载且进程正常运行。桌面冒烟测试同时检查窗口可见和未最小化，不能仅以进程存在或页面可截图作为显示成功的依据。启动器打印开发地址与桌面启动提示，异常启动或退出会显示错误。
+
 ```sh
 npm run build
 npm start

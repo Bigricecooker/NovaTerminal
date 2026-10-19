@@ -23,7 +23,7 @@ delete env.ELECTRON_RUN_AS_NODE
 delete env.NOVA_DEV_SERVER
 for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') env[key] = `${process.env.SystemRoot}\\System32;${process.env.SystemRoot}`
 const child = spawn(join(staged, 'NovaTerminal.exe'), [`--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], {
-  env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true,
+  env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: false,
 })
 let stderr = ''
 child.stderr.on('data', (data) => { stderr += data.toString() })

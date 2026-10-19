@@ -28,6 +28,7 @@
 - `components.json` 的工具别名仍引用 `src/renderer/src/lib/utils.ts`，保留此兼容入口。字体从依赖包本地分发。
 - 桌面使用沙箱 renderer、受限 preload、校验来源 / 主框架 / 参数 / 归属的 IPC，以及每会话 utility process。PTY / SSH 的核心工作进程共用；原生代码不进入前端包。
 - `npm run dev` 启动桌面和 `127.0.0.1:5180` 页面；`npm run dev:web` 保留 `127.0.0.1:5173` 浏览器服务。桌面开发模式不启用 WebSocket 终端插件。
+- Windows GUI 启动必须保持 `windowsHide: false`，避免首次显示被隐藏；桌面冒烟检查窗口可见且未最小化，不能仅依赖页面加载、进程或截图成功。
 - 桌面构建通过 `app://novaterminal/` 加载包内资源，设置 CSP 并禁止外部导航和页面权限；不监听 HTTP / WebSocket。浏览器开发及预览才提供本机会话服务，仅支持 `http://127.0.0.1`；静态 `dist/` 无法独立提供终端。
 - Electron、打包工具和 esbuild 固定版本；ASAR 解包原生模块及 ConPTY 所需文件。新增运行时保留 Electron / Chromium 许可；更换平台或原生依赖时重新验证。
 - 桌面正式资源、桌面开发站点和浏览器站点资产存储隔离，不自动迁移；主机指纹沿用已有平台目录，不保存认证秘密。

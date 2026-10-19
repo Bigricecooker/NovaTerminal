@@ -21,7 +21,7 @@ env.XDG_CONFIG_HOME = temporary
 env.NOVA_TEST_PROFILE = temporary
 const args = ['scripts/electron-smoke.cjs']
 if (process.argv[2] && !dev) args.push(resolve(process.argv[2]))
-const child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+const child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false })
 let passed = false
 let cleanupFailed = false
 child.stdout.on('data', (data) => { process.stdout.write(data); if (data.toString().includes('Desktop smoke passed:')) passed = true })
