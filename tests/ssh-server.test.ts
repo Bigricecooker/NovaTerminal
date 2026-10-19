@@ -10,6 +10,7 @@ import ssh2, { type Server as SshServer, type Connection, type ServerChannel } f
 import { WebSocket } from 'ws'
 import { attachTerminalServer } from '../src/server/terminal-server.ts'
 import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '../src/shared/terminal-protocol.ts'
+import { terminalInputChunks } from '../src/shared/terminal-input.ts'
 
 // Keys and credentials belong only to this temporary protocol fixture.
 const { Server, utils } = ssh2
@@ -174,6 +175,17 @@ test('rejecting first host trust sends no authentication and stores nothing', { 
   await wait(() => client.messages.some((message) => message.type === 'error'))
   assert.equal(server.authentications(), 0)
   assert.deepEqual(await readdir(server.directory), [])
+})
+
+test('SSH receives pasted emoji intact across terminal input chunk boundaries', { timeout: 15_000 }, async (t) => {
+  const server = await fixture(t)
+  const client = await server.connect()
+  await client.trust()
+  await client.ready()
+  const text = 'x'.repeat(16_383) + '🚀中文\r'
+  for (const data of terminalInputChunks(text)) client.send({ type: 'input', data })
+  await wait(() => server.inputs.join('').length >= text.length)
+  assert.ok(server.inputs.join('') === text, 'SSH must receive the original Unicode input without replacement characters')
 })
 
 test('trusted host reconnects with encrypted private key authentication', { timeout: 20_000 }, async (t) => {

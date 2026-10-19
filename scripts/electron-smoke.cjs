@@ -116,8 +116,18 @@ app.on('browser-window-created', (_event, window) => {
       await wait("window.__smoke.events.filter(e => e.message?.type === 'ready').length === 3")
       await evaluate("window.__smoke.ssh = window.__smoke.events.find(e => e.message?.type === 'host-key').id; window.novaTerminal.send(window.__smoke.ssh, {type:'input',data:'NOVA_SSH_ELECTRON_OK'})")
       await wait('window.__smoke.output.includes("ECHO:NOVA_SSH_ELECTRON_OK")')
+      await evaluate(`(() => {
+        const textarea = document.querySelector('[role="tabpanel"][data-state="active"] .xterm-helper-textarea');
+        if (!textarea) throw new Error('Active SSH terminal input not found');
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', 'x'.repeat(16383) + '🚀中文_NOVA_PASTE_OK');
+        textarea.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+      })()`)
+      await wait('window.__smoke.output.includes("🚀中文_NOVA_PASTE_OK")')
+      await wait(`document.querySelector('[role="tabpanel"][data-state="active"] .xterm-rows')?.textContent.includes('🚀中文_NOVA_PASTE_OK')`)
+      await fs.writeFile(path.join(__dirname, '../test-results/electron-review-unicode.png'), (await window.webContents.capturePage()).toPNG())
       await closeTestServer()
-      console.log('Desktop smoke passed: visible title bar, native window states, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust and authentication.')
+      console.log('Desktop smoke passed: visible title bar, native window states, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication and Unicode paste.')
       if (process.platform === 'darwin') app.quit()
       else window.close()
     } catch (error) { console.error(error); process.exitCode = 1; await closeTestServer(); app.quit() }

@@ -74,6 +74,8 @@ npm run test:package
 
 后台终端保持挂载并继续消费输出。xterm 消费数据后按 UTF-16 单元确认，服务通过高低水位暂停和恢复流；未确认输出、Socket / IPC 缓冲及输入均受限制。具体阈值以共享协议和会话实现为准。
 
+粘贴输入使用共享分块函数，在协议长度限制内保留完整 UTF-16 代理对，避免 PTY / SSH 分别编码各块时破坏 emoji。
+
 桌面会话属于创建它的窗口；刷新、渲染进程退出或关闭窗口会清理所属会话。应用正常退出时先请求会话进程关闭，再限时等待退出；关闭中的进程在退出前仍占用资源名额。浏览器终端服务随所属 HTTP 服务关闭或宿主进程退出清理，不绑定 Vite 单个环境的 `closeBundle`，也不拦截宿主终止信号。修改这些行为时需运行生命周期回归测试。
 
 ## UI 维护
@@ -100,10 +102,11 @@ npm run test:desktop
 | `tests/terminal-server.test.ts` | 来源 / 协议拒绝、真实本地 Shell、尺寸、背压与关闭隔离 |
 | `tests/terminal-plugin.test.ts` | 实际 Vite 配置的页面 / PTY、环境关闭、服务重启与宿主信号 |
 | `tests/ssh-protocol.test.ts` | SSH 参数、认证内容与指纹响应校验 |
+| `tests/terminal-input.test.ts` | 分块边界的 Unicode 完整性、独立 UTF-8 编码及协议长度限制 |
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK 和隔离清理 |
 
-`test:desktop` 启动真实 Electron，检查窗口可见性、顶栏安全区域 / 拖动区域样式、最小化 / 最大化 / 关闭、原生主题颜色同步、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证及退出清理。窗口状态通过 Electron API 验证，系统按钮的真实鼠标点击和拖动仍需人工检查。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
+`test:desktop` 启动真实 Electron，检查窗口可见性、顶栏安全区域 / 拖动区域样式、最小化 / 最大化 / 关闭、原生主题颜色同步、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴及退出清理。窗口状态通过 Electron API 验证，系统按钮的真实鼠标点击和拖动仍需人工检查。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 

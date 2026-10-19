@@ -6,7 +6,8 @@ import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { MAX_INPUT, SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '@shared/terminal-protocol'
+import { SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '@shared/terminal-protocol'
+import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 
@@ -116,8 +117,8 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
         stop('error', '输入超过缓冲限制，会话已关闭，请新建终端。')
         return
       }
-      for (let offset = 0; offset < data.length; offset += MAX_INPUT) {
-        send({ type: 'input', data: data.slice(offset, offset + MAX_INPUT) })
+      for (const chunk of terminalInputChunks(data)) {
+        send({ type: 'input', data: chunk })
       }
     })
     timeout = window.setTimeout(() => stop('error', '终端连接超时，请检查服务和网络后新建终端。'), target.kind === 'ssh' ? SSH_START_TIMEOUT + 5_000 : 12_000)
