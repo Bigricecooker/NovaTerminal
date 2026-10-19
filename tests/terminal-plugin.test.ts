@@ -4,9 +4,9 @@ import { createServer as createHttpServer } from 'node:http'
 import { test, type TestContext } from 'node:test'
 import { createServer as createViteServer, type ViteDevServer } from 'vite'
 import { WebSocket } from 'ws'
-import { attachTerminalServer } from '../server/terminal-server.ts'
-import { terminalPlugin } from '../server/terminal-plugin.ts'
-import { parseServerMessage } from '../src/lib/terminal-protocol.ts'
+import { attachTerminalServer } from '../src/server/terminal-server.ts'
+import { terminalPlugin } from '../src/server/terminal-plugin.ts'
+import { parseServerMessage } from '../src/shared/terminal-protocol.ts'
 
 async function expectTerminalReady(app: ViteDevServer, t: TestContext) {
   const address = app.httpServer?.address()
@@ -64,6 +64,29 @@ test('terminal remains available after an environment closes and Vite restarts',
     await app.environments.ssr.close()
     await expectTerminalReady(app, t)
     await app.restart()
+    await expectTerminalReady(app, t)
+  } finally {
+    await app.close()
+  }
+})
+
+test('project Vite configuration serves the renderer and starts its PTY worker', { timeout: 20_000 }, async (t) => {
+  const app = await createViteServer({
+    server: { port: 0, strictPort: false },
+    logLevel: 'silent',
+  })
+  try {
+    await app.listen()
+    assert.ok(app.config.root.replaceAll('\\', '/').endsWith('/src/renderer'))
+    const address = app.httpServer?.address()
+    assert.ok(address && typeof address !== 'string')
+    const origin = `http://127.0.0.1:${address.port}`
+    const page = await fetch(`${origin}/`)
+    assert.equal(page.status, 200)
+    assert.match(await page.text(), /<title>NovaTerminal<\/title>/)
+    const entry = await fetch(`${origin}/src/main.tsx`)
+    assert.equal(entry.status, 200)
+    assert.match(await entry.text(), /react-dom/)
     await expectTerminalReady(app, t)
   } finally {
     await app.close()

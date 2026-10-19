@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, loadAssets, parseAssetDocument, saveAssets, type Asset } from '../src/lib/assets.ts'
+import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, loadAssets, parseAssetDocument, saveAssets, type Asset } from '../src/renderer/src/lib/assets.ts'
 
 const assets: Asset[] = [
   { kind: 'group', id: 'prod', name: '生产环境', parentId: null },

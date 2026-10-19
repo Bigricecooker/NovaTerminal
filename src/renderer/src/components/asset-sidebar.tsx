@@ -8,7 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Separator } from '@/components/ui/separator'
 import { MAX_ASSETS, appendAsset, assetTree, loadAssets, saveAssets, type AssetDraft, type AssetNode } from '@/lib/assets'
-import type { SshOptions } from '@/lib/terminal-protocol'
+import type { SshOptions } from '@shared/terminal-protocol'
 
 export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConnect: (options: SshOptions) => boolean }) {
   const [initial] = useState(() => {

@@ -8,8 +8,8 @@ import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import ssh2, { type Server as SshServer, type Connection, type ServerChannel } from 'ssh2'
 import { WebSocket } from 'ws'
-import { attachTerminalServer } from '../server/terminal-server.ts'
-import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '../src/lib/terminal-protocol.ts'
+import { attachTerminalServer } from '../src/server/terminal-server.ts'
+import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '../src/shared/terminal-protocol.ts'
 
 // Keys and credentials belong only to this temporary protocol fixture.
 const { Server, utils } = ssh2

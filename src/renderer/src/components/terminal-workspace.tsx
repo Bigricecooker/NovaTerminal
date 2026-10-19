@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TerminalSession } from '@/components/terminal-session'
 import { SshConnectionDialog } from '@/components/ssh-connection-dialog'
 import { AssetSidebar } from '@/components/asset-sidebar'
-import { MAX_SESSIONS, type SshOptions } from '@/lib/terminal-protocol'
+import { MAX_SESSIONS, type SshOptions } from '@shared/terminal-protocol'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
 export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; actionContainer: HTMLElement | null }) {

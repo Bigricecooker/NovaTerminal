@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "paths": { "@/*": ["./src/renderer/src/*"], "@shared/*": ["./src/shared/*"] },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -22,5 +23,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "server", "tests"]
+  "include": ["vite.config.ts", "src/main", "src/preload", "src/server", "src/shared", "tests"]
 }

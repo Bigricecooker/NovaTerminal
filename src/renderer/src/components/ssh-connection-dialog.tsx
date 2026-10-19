@@ -6,7 +6,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import { parseSshOptions, type SshEndpoint, type SshOptions } from '@/lib/terminal-protocol'
+import { parseSshOptions, type SshEndpoint, type SshOptions } from '@shared/terminal-protocol'
 
 export function SshConnectionDialog({ disabled, onConnect, endpoint, trigger }: {
   disabled: boolean

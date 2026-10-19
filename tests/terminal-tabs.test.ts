@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MAX_SESSIONS } from '../src/lib/terminal-protocol.ts'
-import { initialTerminalTabs, terminalTabsReducer } from '../src/lib/terminal-tabs.ts'
+import { MAX_SESSIONS } from '../src/shared/terminal-protocol.ts'
+import { initialTerminalTabs, terminalTabsReducer } from '../src/renderer/src/lib/terminal-tabs.ts'
 
 function openTabs(count: number) {
   let state = initialTerminalTabs

@@ -1,14 +1,13 @@
 import type { Plugin } from 'vite'
 import { Server } from 'node:http'
-import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { attachTerminalServer } from './terminal-server.ts'
 
 export function terminalPlugin(): Plugin {
-  let workerPath = ''
+  const workerPath = fileURLToPath(new URL('./pty-worker.ts', import.meta.url))
   return {
     name: 'nova-local-terminal',
     configResolved(config) {
-      workerPath = resolve(config.root, 'server/pty-worker.ts')
       if (config.server.host !== '127.0.0.1' || config.preview.host !== '127.0.0.1' || config.server.https) {
         throw new Error('NovaTerminal 本地终端只支持 http://127.0.0.1，请勿修改监听地址或启用 HTTPS。')
       }

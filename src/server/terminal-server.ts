@@ -3,7 +3,7 @@ import type { Server, IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
-import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, TERMINAL_PATH, parseClientMessage, parseServerMessage, type ServerMessage } from '../src/lib/terminal-protocol.ts'
+import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, TERMINAL_PATH, parseClientMessage, parseServerMessage, type ServerMessage } from '../shared/terminal-protocol.ts'
 import { createKnownHosts } from './known-hosts.ts'
 import { createSshSession, type SshSession } from './ssh-session.ts'
 

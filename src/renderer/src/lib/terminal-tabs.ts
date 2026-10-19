@@ -1,4 +1,4 @@
-import { MAX_SESSIONS, type SshOptions } from './terminal-protocol.ts'
+import { MAX_SESSIONS, type SshOptions } from '../../../shared/terminal-protocol.ts'
 
 export type TerminalTarget = { kind: 'local' } | ({ kind: 'ssh' } & Pick<SshOptions, 'host' | 'port' | 'username'>)
 type TerminalTab = { id: string; label: string; target: TerminalTarget }

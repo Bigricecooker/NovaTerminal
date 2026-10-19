@@ -6,7 +6,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/c
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { MAX_GROUP_DEPTH, groupOptions, type Asset, type AssetDraft } from '@/lib/assets'
-import { parseSshEndpoint } from '@/lib/terminal-protocol'
+import { parseSshEndpoint } from '@shared/terminal-protocol'
 
 export function AssetCreateDialog({ kind, assets, disabled, onSave }: {
   kind: Asset['kind']; assets: Asset[]; disabled: boolean

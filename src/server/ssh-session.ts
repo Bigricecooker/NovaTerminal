@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
 import ssh2, { type ClientChannel, type ConnectConfig } from 'ssh2'
-import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '../src/lib/terminal-protocol.ts'
+import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '../shared/terminal-protocol.ts'
 import type { KnownHosts } from './known-hosts.ts'
 
 const { Client } = ssh2

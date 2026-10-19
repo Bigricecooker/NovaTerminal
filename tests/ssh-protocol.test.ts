@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { parseClientMessage, parseSshOptions } from '../src/lib/terminal-protocol.ts'
+import { parseClientMessage, parseSshOptions } from '../src/shared/terminal-protocol.ts'
 
 const options = { host: 'SERVER.invalid', port: 22, username: 'operator', auth: { method: 'password', password: 'test-only' } }
 

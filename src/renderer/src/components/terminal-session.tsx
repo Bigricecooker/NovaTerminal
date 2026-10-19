@@ -6,7 +6,8 @@ import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { MAX_INPUT, SSH_START_TIMEOUT, TERMINAL_PATH, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '@/lib/terminal-protocol'
+import { MAX_INPUT, SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '@shared/terminal-protocol'
+import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 
 type Phase = 'connecting' | 'verifying' | 'running' | 'closed' | 'error'
@@ -63,9 +64,8 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
     let ready = false
     let frame = 0
     let timeout = 0
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${TERMINAL_PATH}`)
     const send = (message: ClientMessage) => {
-      if (!disposed && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+      if (!disposed && transport.isOpen()) transport.send(message)
     }
     const stop = (phase: 'closed' | 'error', detail: string) => {
       if (disposed || ended) return
@@ -75,7 +75,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       terminal.options.disableStdin = true
       setHostKey(null)
       setSession((current) => ({ ...current, phase, detail }))
-      socket.close()
+      transport.close()
     }
     const fitTerminal = () => {
       if (disposed) return
@@ -88,7 +88,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       const rows = Math.max(2, Math.min(300, terminal.rows))
       if (cols !== terminal.cols || rows !== terminal.rows) terminal.resize(cols, rows)
       setSize({ cols, rows })
-      if (socket.readyState !== WebSocket.OPEN || ended) return
+      if (!transport.isOpen() || ended) return
       if (!started) {
         started = true
         if (target.kind === 'ssh') {
@@ -112,7 +112,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
     const input = terminal.onData((data) => {
       if (!ready || ended) return
       // Bound a single paste so it cannot enqueue an unlimited amount of input.
-      if (data.length > 65_536 || socket.bufferedAmount > 65_536) {
+      if (data.length > 65_536 || transport.buffered() > 65_536) {
         stop('error', '输入超过缓冲限制，会话已关闭，请新建终端。')
         return
       }
@@ -121,11 +121,8 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       }
     })
     timeout = window.setTimeout(() => stop('error', '终端连接超时，请检查服务和网络后新建终端。'), target.kind === 'ssh' ? SSH_START_TIMEOUT + 5_000 : 12_000)
-    socket.onopen = fitTerminal
-    socket.onmessage = (event: MessageEvent<unknown>) => {
+    const receiveMessage = (message: ServerMessage) => {
       if (disposed || ended) return
-      const message = typeof event.data === 'string' ? parseServerMessage(event.data) : null
-      if (!message) { stop('error', '终端服务返回了无效消息。'); return }
       switch (message.type) {
         case 'host-key':
           if (target.kind !== 'ssh' || message.host !== target.host || message.port !== target.port || ready) {
@@ -153,8 +150,11 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
         case 'error': stop('error', message.message); break
       }
     }
-    socket.onerror = () => stop('error', '无法连接本地终端服务，请确认本地服务正在运行后重试。')
-    socket.onclose = () => stop('closed', '连接已断开；可通过右上角图标新建终端。')
+    const transport = createTerminalTransport({
+      open: fitTerminal, message: receiveMessage,
+      error: () => stop('error', '无法连接终端会话，请重新打开终端。'),
+      close: () => stop('closed', '连接已断开；可通过右上角图标新建终端。'),
+    })
     controls.current = {
       terminal,
       fit: scheduleFit,
@@ -177,11 +177,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       cancelAnimationFrame(frame)
       observer.disconnect()
       window.removeEventListener('resize', scheduleFit)
-      socket.onopen = null
-      socket.onmessage = null
-      socket.onerror = null
-      socket.onclose = null
-      socket.close()
+      transport.close()
       input.dispose()
       terminal.dispose()
       controls.current = null

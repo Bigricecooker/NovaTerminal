@@ -1,4 +1,4 @@
-import { parseSshEndpoint, type SshEndpoint } from './terminal-protocol.ts'
+import { parseSshEndpoint, type SshEndpoint } from '../../../shared/terminal-protocol.ts'
 
 export const ASSET_STORAGE_KEY = 'novaterminal.assets.v1'
 export const MAX_ASSETS = 500

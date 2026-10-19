@@ -6,7 +6,12 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', '.agents/**', '.claude/**']),
+  globalIgnores(['dist', 'out', 'release', 'test-results', '.agents/**', '.claude/**']),
+  {
+    files: ['scripts/**/*.{mjs,cjs}'],
+    extends: [js.configs.recommended],
+    languageOptions: { globals: globals.node },
+  },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -20,11 +25,11 @@ export default defineConfig([
     },
   },
   {
-    files: ['server/**/*.ts', 'tests/**/*.ts'],
+    files: ['src/server/**/*.ts', 'src/main/**/*.ts', 'src/preload/**/*.ts', 'tests/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
   {
-    files: ['src/components/ui/button.tsx'],
+    files: ['src/renderer/src/components/ui/button.tsx'],
     rules: {
       'react-refresh/only-export-components': [
         'error',
@@ -33,7 +38,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/components/ui/badge.tsx'],
+    files: ['src/renderer/src/components/ui/badge.tsx'],
     rules: {
       'react-refresh/only-export-components': [
         'error',

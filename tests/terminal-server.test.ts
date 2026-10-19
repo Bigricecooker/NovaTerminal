@@ -4,8 +4,8 @@ import { once } from 'node:events'
 import { after, before, test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { WebSocket } from 'ws'
-import { attachTerminalServer } from '../server/terminal-server.ts'
-import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage } from '../src/lib/terminal-protocol.ts'
+import { attachTerminalServer } from '../src/server/terminal-server.ts'
+import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage } from '../src/shared/terminal-protocol.ts'
 
 const server = createServer()
 const dispose = attachTerminalServer(server)
