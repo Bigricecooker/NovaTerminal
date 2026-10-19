@@ -1,9 +1,18 @@
 import { resolve, relative, isAbsolute } from 'node:path'
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
+import type { WindowAppearance } from '../shared/desktop-api.ts'
 
 export const APP_URL = 'app://novaterminal/index.html'
 export const DEV_URL = 'http://127.0.0.1:5180/'
 export const MAX_IPC_SIZE = 262_144
+
+export function windowAppearance(value: unknown): WindowAppearance | null {
+  if (typeof value !== 'object' || value === null || Object.keys(value).length !== 2
+    || !('background' in value) || !('foreground' in value)
+    || typeof value.background !== 'string' || !/^#[a-f0-9]{6}$/i.test(value.background)
+    || typeof value.foreground !== 'string' || !/^#[a-f0-9]{6}$/i.test(value.foreground)) return null
+  return { background: value.background, foreground: value.foreground }
+}
 
 export function trustedFrame(senderId: number, ownerId: number, mainFrame: boolean, url: string, expected: string): boolean {
   return senderId === ownerId && mainFrame && url === expected

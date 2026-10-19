@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import { test } from 'node:test'
-import { APP_URL, DEV_URL, assetPath, desktopMessage, trustedFrame } from '../src/main/security.ts'
+import { APP_URL, DEV_URL, assetPath, desktopMessage, trustedFrame, windowAppearance } from '../src/main/security.ts'
 import { createDesktopSessions, type SessionProcess } from '../src/main/sessions.ts'
 import type { DesktopEvent } from '../src/shared/desktop-api.ts'
 
@@ -11,6 +11,13 @@ test('desktop IPC requires the owning main frame and exact document URL', () => 
   assert.ok(trustedFrame(10, 10, true, DEV_URL, DEV_URL))
   for (const [sender, main, url] of [[11, true, APP_URL], [10, false, APP_URL], [10, true, `${APP_URL}?other`], [10, true, 'https://example.invalid/']] as const) {
     assert.equal(trustedFrame(sender, 10, main, url, APP_URL), false)
+  }
+})
+
+test('window appearance accepts only bounded opaque RGB colors', () => {
+  assert.deepEqual(windowAppearance({ background: '#ffffff', foreground: '#0A0A0A' }), { background: '#ffffff', foreground: '#0A0A0A' })
+  for (const value of [null, 'dark', {}, { background: '#fff', foreground: '#000' }, { background: 'url(file:///secret)', foreground: '#000000' }, { background: '#ffffff', foreground: '#000000', command: 'close' }]) {
+    assert.equal(windowAppearance(value), null)
   }
 })
 

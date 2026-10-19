@@ -39,6 +39,10 @@ npm run test:package
 
 浏览器 PTY worker 相对于 `src/server/terminal-plugin.ts` 定位，不依赖 Vite 页面根目录或配置文件位置。桌面入口通过 esbuild 输出到 `out/electron/`，前端构建输出到仓库根目录 `dist/`。
 
+桌面使用 `titleBarStyle: hidden` 与原生 Window Controls Overlay，将窗口按钮融入 48px 应用页头。内容通过 `titlebar-area-x` / `titlebar-area-width` CSS 环境变量避让原生按钮，页头为拖动区，操作按钮组为 `no-drag`。浏览器模式保持普通页头；窗口颜色由界面主题 tokens 转为 RGB，经独立、有限且校验来源与参数的 `novaWindow.setAppearance` 同步。
+
+页头下方的水平 Separator 独立于 48px 原生叠加区域，保证窗口按钮下方的线条连续；操作组使用竖直 Separator。终端不设独立清屏工具栏，Shell、连接状态和错误提示保留在底部状态栏。
+
 | 位置 | 职责 |
 | --- | --- |
 | `src/renderer/src/App.tsx` | 页面布局、主题和工作区加载 |
@@ -99,7 +103,7 @@ npm run test:desktop
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK 和隔离清理 |
 
-`test:desktop` 启动真实 Electron，检查沙箱配置、preload、本地 PTY、命令输入、多标签、主题、窗口尺寸、SSH 首次指纹确认、密码认证及退出清理。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
+`test:desktop` 启动真实 Electron，检查窗口可见性、顶栏安全区域 / 拖动区域样式、最小化 / 最大化 / 关闭、原生主题颜色同步、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证及退出清理。窗口状态通过 Electron API 验证，系统按钮的真实鼠标点击和拖动仍需人工检查。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 

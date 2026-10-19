@@ -13,6 +13,10 @@ export const DESKTOP_CHANNELS = {
   open: 'terminal:open', send: 'terminal:send', close: 'terminal:close', event: 'terminal:event',
 } as const
 
+export type WindowAppearance = { background: string; foreground: string }
+export type DesktopWindowApi = { setAppearance: (appearance: WindowAppearance) => Promise<void> }
+export const WINDOW_APPEARANCE_CHANNEL = 'window:appearance'
+
 declare global {
-  interface Window { novaTerminal?: DesktopTerminalApi }
+  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi }
 }

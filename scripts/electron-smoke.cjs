@@ -15,6 +15,11 @@ const closeTestServer = async () => {
 }
 const deadline = setTimeout(() => { console.error('Desktop smoke test timed out'); app.exit(1) }, 60_000)
 app.on('browser-window-created', (_event, window) => {
+  const overlays = []
+  if (process.platform !== 'darwin') {
+    const setOverlay = window.setTitleBarOverlay.bind(window)
+    window.setTitleBarOverlay = (appearance) => { overlays.push(appearance); setOverlay(appearance) }
+  }
   window.webContents.once('did-finish-load', async () => {
     try {
       const evaluate = (source) => window.webContents.executeJavaScript(source)
@@ -32,6 +37,25 @@ app.on('browser-window-created', (_event, window) => {
       await wait('Boolean(document.querySelector(\'button[aria-label="新建本地终端"]\'))')
       assert.equal(await evaluate('typeof require'), 'undefined')
       assert.equal(await evaluate('typeof window.novaTerminal.send'), 'function')
+      assert.equal(await evaluate('typeof window.novaWindow.setAppearance'), 'function')
+      await wait('navigator.windowControlsOverlay?.visible === true')
+      assert.equal(await evaluate('document.querySelector("header").getBoundingClientRect().height'), 48)
+      assert.equal(await evaluate('getComputedStyle(document.querySelector("header")).getPropertyValue("-webkit-app-region")'), 'drag')
+      assert.equal(await evaluate('getComputedStyle(document.querySelector(".app-titlebar-actions")).getPropertyValue("-webkit-app-region")'), 'no-drag')
+      assert.ok(await evaluate('document.querySelector(".app-titlebar-actions").getBoundingClientRect().right <= navigator.windowControlsOverlay.getTitlebarAreaRect().right'))
+      assert.equal(await evaluate('window.novaWindow.setAppearance({background:"#fff",foreground:"#000000"}).then(() => false, () => true)'), true)
+      await fs.mkdir(path.join(__dirname, '../test-results'), { recursive: true })
+      await fs.writeFile(path.join(__dirname, '../test-results/titlebar-light.png'), (await window.webContents.capturePage()).toPNG())
+      window.minimize()
+      await delay(100)
+      assert.equal(window.isMinimized(), true)
+      window.restore()
+      window.maximize()
+      await delay(100)
+      assert.equal(window.isMaximized(), true)
+      window.unmaximize()
+      window.show()
+      await delay(150)
       await evaluate(`window.__smoke = { events: [], output: '' }; window.novaTerminal.onEvent(event => { window.__smoke.events.push(event); if (event.message?.type === 'output') window.__smoke.output += event.message.data }); document.querySelector('button[aria-label="新建本地终端"]').click()`)
       await wait("window.__smoke.events.some(e => e.message?.type === 'ready')")
       await wait('window.__smoke.output.includes("PS ") || window.__smoke.output.length > 0')
@@ -50,6 +74,13 @@ app.on('browser-window-created', (_event, window) => {
       await wait('document.querySelectorAll(\'[role="tab"]\').length === 1')
       await evaluate(`document.querySelector('button[aria-label="切换深色主题"]').click()`)
       await wait('document.documentElement.classList.contains("dark")')
+      const themeDeadline = Date.now() + 5_000
+      while (window.getBackgroundColor().toLowerCase() !== '#0a0a0a') { assert.ok(Date.now() < themeDeadline, 'Native title bar must follow dark theme'); await delay(30) }
+      if (process.platform !== 'darwin') {
+        assert.deepEqual(overlays.at(-1), { color: '#0a0a0a', symbolColor: '#fafafa' })
+      }
+      await delay(200)
+      await fs.writeFile(path.join(__dirname, '../test-results/titlebar-dark.png'), (await window.webContents.capturePage()).toPNG())
       window.setSize(1000, 700)
       await delay(150)
       await fs.mkdir(path.join(__dirname, '../test-results'), { recursive: true })
@@ -86,8 +117,9 @@ app.on('browser-window-created', (_event, window) => {
       await evaluate("window.__smoke.ssh = window.__smoke.events.find(e => e.message?.type === 'host-key').id; window.novaTerminal.send(window.__smoke.ssh, {type:'input',data:'NOVA_SSH_ELECTRON_OK'})")
       await wait('window.__smoke.output.includes("ECHO:NOVA_SSH_ELECTRON_OK")')
       await closeTestServer()
-      console.log('Desktop smoke passed: sandbox, preload, PTY, input, tabs, theme, resize, SSH trust and authentication.')
-      app.quit()
+      console.log('Desktop smoke passed: visible title bar, native window states, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust and authentication.')
+      if (process.platform === 'darwin') app.quit()
+      else window.close()
     } catch (error) { console.error(error); process.exitCode = 1; await closeTestServer(); app.quit() }
   })
 })

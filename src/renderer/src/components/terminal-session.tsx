@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { EraserIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from 'lucide-react'
+import { ShieldCheckIcon } from 'lucide-react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -13,7 +13,7 @@ import type { TerminalTarget } from '@/lib/terminal-tabs'
 type Phase = 'connecting' | 'verifying' | 'running' | 'closed' | 'error'
 type Session = { phase: Phase; detail: string; shell: string }
 type HostKey = Extract<ServerMessage, { type: 'host-key' }>
-type Controls = { terminal: Terminal; fit: () => void; clear: () => void; trust: (key: HostKey, accept: boolean) => void }
+type Controls = { terminal: Terminal; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
 
 const phaseLabels: Record<Phase, string> = {
   connecting: '连接中', verifying: '待确认指纹', running: '运行中', closed: '已结束', error: '连接失败',
@@ -164,11 +164,6 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
         if (accept) setSession({ phase: 'connecting', detail: '正在验证 SSH 身份…', shell: '' })
         else stop('closed', '已拒绝主机指纹，连接已取消。')
       },
-      clear: () => {
-        terminal.clear()
-        if (ready && !ended) send({ type: 'clear' })
-        terminal.focus()
-      },
     }
 
     return () => {
@@ -204,16 +199,6 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
-      <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          {target.kind === 'ssh' ? <ServerIcon className="size-4 text-muted-foreground" aria-hidden="true" /> : <TerminalIcon className="size-4 text-muted-foreground" aria-hidden="true" />}
-          <h2 className="truncate text-sm font-medium">{session.shell || label}</h2>
-          <Badge variant={session.phase === 'error' ? 'destructive' : 'secondary'}>{phaseLabels[session.phase]}</Badge>
-        </div>
-        <Button variant="ghost" size="sm" onClick={() => controls.current?.clear()}>
-          <EraserIcon data-icon="inline-start" />清屏
-        </Button>
-      </div>
       {hostKey && (
         <div className="shrink-0 p-4">
           <Alert>
@@ -234,7 +219,10 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
         <div ref={container} className="absolute inset-0 overflow-hidden p-3 sm:p-4" aria-label={`${label}输入输出`} />
       </div>
       <footer className="flex min-h-9 shrink-0 items-center justify-between gap-4 border-t px-4 py-2 text-xs text-muted-foreground">
-        <p role="status" aria-live="polite" className="min-w-0 break-all">{session.detail}</p>
+        <div role="status" aria-live="polite" className="flex min-w-0 items-center gap-2">
+          <Badge variant={session.phase === 'error' ? 'destructive' : 'secondary'} className="shrink-0">{phaseLabels[session.phase]}</Badge>
+          <p className="min-w-0 break-all">{session.shell && `${session.shell} · `}{session.detail}</p>
+        </div>
         <div className="flex shrink-0 items-center gap-4 font-mono tabular-nums">
           {size && <span aria-label={`${size.cols} 列 ${size.rows} 行`}>{size.cols} × {size.rows}</span>}
           <span className="hidden sm:inline">UTF-8</span>

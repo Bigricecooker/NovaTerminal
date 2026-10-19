@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { DESKTOP_CHANNELS, type DesktopEvent, type DesktopTerminalApi } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_APPEARANCE_CHANNEL, type DesktopEvent, type DesktopTerminalApi, type DesktopWindowApi } from '../shared/desktop-api.ts'
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
 
 const pending = new Map<string, number>()
@@ -26,3 +26,7 @@ const api: DesktopTerminalApi = {
   },
 }
 contextBridge.exposeInMainWorld('novaTerminal', api)
+const windowApi: DesktopWindowApi = {
+  setAppearance: (appearance) => ipcRenderer.invoke(WINDOW_APPEARANCE_CHANNEL, { background: appearance.background, foreground: appearance.foreground }),
+}
+contextBridge.exposeInMainWorld('novaWindow', windowApi)

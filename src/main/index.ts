@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, Menu, net, protocol, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS } from '../shared/desktop-api.ts'
-import { APP_URL, DEV_URL, assetPath, trustedFrame } from './security.ts'
+import { DESKTOP_CHANNELS, WINDOW_APPEARANCE_CHANNEL } from '../shared/desktop-api.ts'
+import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAppearance } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
@@ -31,6 +31,8 @@ function authorize(event: Electron.IpcMainInvokeEvent): number {
 async function createWindow() {
   const current = new BrowserWindow({
     title: 'NovaTerminal', width: 1200, height: 800, minWidth: 720, minHeight: 480, show: false,
+    backgroundColor: '#ffffff', titleBarStyle: 'hidden',
+    titleBarOverlay: process.platform === 'darwin' ? { height: 48 } : { height: 48, color: '#ffffff', symbolColor: '#0a0a0a' },
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
   })
   window = current
@@ -63,6 +65,15 @@ void app.whenReady().then(async () => {
   ipcMain.handle(DESKTOP_CHANNELS.open, (event) => sessions.open(authorize(event)))
   ipcMain.handle(DESKTOP_CHANNELS.send, (event, id: unknown, message: unknown) => sessions.send(authorize(event), id, message))
   ipcMain.handle(DESKTOP_CHANNELS.close, (event, id: unknown) => sessions.close(authorize(event), id))
+  ipcMain.handle(WINDOW_APPEARANCE_CHANNEL, (event, raw: unknown) => {
+    authorize(event)
+    const appearance = windowAppearance(raw)
+    if (!appearance) throw new Error('Invalid window appearance')
+    if (window && !window.isDestroyed()) {
+      window.setBackgroundColor(appearance.background)
+      if (process.platform !== 'darwin') window.setTitleBarOverlay({ color: appearance.background, symbolColor: appearance.foreground })
+    }
+  })
   await createWindow()
   app.on('activate', () => { if (!window) void createWindow() })
 }).catch(() => { console.error('NovaTerminal 桌面启动失败。'); app.quit() })
