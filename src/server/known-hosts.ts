@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { link, mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,8 +8,8 @@ export const defaultKnownHostsDirectory = join(
   'NovaTerminal', 'known-hosts',
 )
 
-function missing(error: unknown): boolean {
-  return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+function hasCode(error: unknown, code: string): boolean {
+  return error instanceof Error && 'code' in error && error.code === code
 }
 
 export function createKnownHosts(directory = defaultKnownHostsDirectory) {
@@ -27,7 +27,7 @@ export function createKnownHosts(directory = defaultKnownHostsDirectory) {
       }
       return value.fingerprint
     } catch (error) {
-      if (missing(error)) return null
+      if (hasCode(error, 'ENOENT')) return null
       throw error
     }
   }
@@ -41,8 +41,20 @@ export function createKnownHosts(directory = defaultKnownHostsDirectory) {
           return
         }
         await mkdir(directory, { recursive: true, mode: 0o700 })
-        // Never overwrite an existing fingerprint, including from another process.
-        await writeFile(file(host, port), JSON.stringify({ host, port, fingerprint }), { flag: 'wx', mode: 0o600 })
+        const target = file(host, port)
+        const temporary = `${target}.${randomUUID()}.tmp`
+        try {
+          await writeFile(temporary, JSON.stringify({ host, port, fingerprint }), { flag: 'wx', mode: 0o600 })
+          try {
+            // Publish a complete record atomically without replacing another process's trust.
+            await link(temporary, target)
+          } catch (error) {
+            if (!hasCode(error, 'EEXIST')) throw error
+            if (await read(host, port) !== fingerprint) throw new Error('Host key changed', { cause: error })
+          }
+        } finally {
+          await unlink(temporary).catch((error: unknown) => { if (!hasCode(error, 'ENOENT')) throw error })
+        }
       })
       writing = operation.catch(() => {})
       return operation
