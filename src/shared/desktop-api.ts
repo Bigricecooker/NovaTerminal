@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from './terminal-protocol.ts'
+import type { ClientMessage, ServerMessage, SshOptions } from './terminal-protocol.ts'
 
 export type DesktopEvent = { id: string; message: ServerMessage } | { id: string; closed: true }
 
@@ -26,7 +26,9 @@ export const WINDOW_CHANNELS = { action: 'window:action', state: 'window:state',
 
 export const DIRECTORY_CHANNEL = 'directory:pick'
 export type DesktopDirectoryApi = { pick: () => Promise<string | null> }
+export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credential:remove' } as const
+export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void> }
 
 declare global {
-  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi }
+  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
 }

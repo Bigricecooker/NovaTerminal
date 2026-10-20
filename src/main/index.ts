@@ -1,7 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS } from '../shared/desktop-api.ts'
+import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
@@ -13,6 +14,10 @@ const rendererUrl = dev ? DEV_URL : APP_URL
 let window: BrowserWindow | null = null
 let quitting = false
 let pickingDirectory = false
+const credentialStore = () => createCredentialStore(join(app.getPath('userData'), 'ssh-credentials', dev ? 'development' : 'desktop'), {
+  available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || !['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend())),
+  encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value),
+})
 const sessions = createDesktopSessions(
   () => utilityProcess.fork(join(__dirname, 'session-worker.cjs'), [], { stdio: 'ignore', serviceName: 'NovaTerminal Session' }),
   (owner, event) => {
@@ -20,6 +25,7 @@ const sessions = createDesktopSessions(
       window.webContents.send(DESKTOP_CHANNELS.event, event)
     }
   },
+  (reference) => credentialStore().load(reference),
 )
 
 function authorize(event: Electron.IpcMainInvokeEvent): number {
@@ -76,6 +82,17 @@ void app.whenReady().then(async () => {
   ipcMain.handle(DESKTOP_CHANNELS.open, (event) => sessions.open(authorize(event)))
   ipcMain.handle(DESKTOP_CHANNELS.send, (event, id: unknown, message: unknown) => sessions.send(authorize(event), id, message))
   ipcMain.handle(DESKTOP_CHANNELS.close, (event, id: unknown) => sessions.close(authorize(event), id))
+  ipcMain.handle(CREDENTIAL_CHANNELS.save, (event, id: unknown, raw: unknown) => {
+    authorize(event)
+    if (typeof raw !== 'string' || raw.length > 262_144) throw new Error('无效的 SSH 认证配置。')
+    let options: unknown
+    try { options = JSON.parse(raw) } catch { throw new Error('无效的 SSH 认证配置。') }
+    credentialStore().save(id, options)
+  })
+  ipcMain.handle(CREDENTIAL_CHANNELS.remove, (event, ids: unknown) => {
+    authorize(event)
+    credentialStore().remove(ids)
+  })
   ipcMain.handle(DIRECTORY_CHANNEL, async (event) => {
     authorize(event)
     const owner = window

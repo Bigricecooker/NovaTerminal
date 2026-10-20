@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, parseServerMessage } from '../shared/terminal-protocol.ts'
+import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, parseServerMessage, type SavedSshConnection, type SshOptions } from '../shared/terminal-protocol.ts'
 import type { DesktopEvent } from '../shared/desktop-api.ts'
 import { desktopMessage, sessionId } from './security.ts'
 
@@ -15,7 +15,7 @@ type Session = {
   inputAt: number; inputCount: number; timer: ReturnType<typeof setTimeout>
 }
 
-export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void) {
+export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void, resolveSsh?: (reference: SavedSshConnection) => SshOptions) {
   const sessions = new Map<string, Session>()
   const slots = new Set<string>()
   // Closing workers retain their slot until exit, including native resource teardown.
@@ -82,10 +82,19 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
     send: (owner: number, id: unknown, raw: unknown) => {
       const current = owned(owner, id)
       if (typeof id !== 'string') return false
-      const message = desktopMessage(raw)
+      let message = desktopMessage(raw)
       if (!message || (message.type !== 'start' && !current.started)) { fail(id, '终端收到无效消息。'); return false }
       if (message.type === 'start') {
         if (current.started) { fail(id, '终端已经启动。'); return false }
+        if (message.savedSsh) {
+          try {
+            if (!resolveSsh) throw new Error('No credential resolver')
+            message = { type: 'start', cols: message.cols, rows: message.rows, ssh: resolveSsh(message.savedSsh) }
+          } catch {
+            fail(id, '无法读取此连接的系统安全存储认证信息；请确认密钥库已解锁。旧连接或凭据失效时，请删除后重新添加。')
+            return false
+          }
+        }
         current.started = true
         try { activate(id, current) }
         catch { fail(id, '无法启动终端会话进程。'); return false }

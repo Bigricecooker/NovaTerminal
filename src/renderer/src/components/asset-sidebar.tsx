@@ -3,7 +3,6 @@ import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPl
 import { cn } from 'cn'
 import { AssetCreateDialog } from '@/components/asset-create-dialog'
 import { AssetActionDialog, type AssetAction } from '@/components/asset-action-dialog'
-import { SshConnectionDialog } from '@/components/ssh-connection-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -11,12 +10,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Separator } from '@/components/ui/separator'
 import { MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, initialAssetView, loadAssetWorkspace, moveAsset, normalizeAssetView, saveAssetWorkspace, viewAfterAppend, type Asset, type AssetDraft, type AssetNode, type AssetView } from '@/lib/assets'
-import { parseLocalDirectory, type SshOptions } from '@shared/terminal-protocol'
+import { parseLocalDirectory, type SavedSshConnection, type SshOptions } from '@shared/terminal-protocol'
 
 const ASSET_DRAG = 'application/x-novaterminal-asset'
 
 export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
-  atLimit: boolean; onConnect: (options: SshOptions) => boolean; onOpenLocal: (directory: string, name: string) => boolean
+  atLimit: boolean; onConnect: (connection: SavedSshConnection) => boolean; onOpenLocal: (directory: string, name: string) => boolean
 }) {
   const [initial] = useState(() => {
     try { return loadAssetWorkspace(window.localStorage) }
@@ -55,14 +54,26 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
     const failure = persist(assets, next)
     if (failure) setError(failure)
   }
-  const save = (draft: AssetDraft): string | null => {
+  const save = async (draft: AssetDraft, ssh?: { options: SshOptions; connect: boolean }): Promise<string | null> => {
     const newId = crypto.randomUUID()
     const next = appendAsset(assets, draft, newId)
     if (!next) return `无法保存，请检查所属分组和配置；资产最多 ${MAX_ASSETS} 项。`
+    if (draft.kind === 'connection') {
+      if (!ssh || !window.novaCredentials) return '无法保存 SSH 认证信息，请通过桌面应用重新添加连接。'
+      try { await window.novaCredentials.save(newId, ssh.options) }
+      catch { return '无法安全保存 SSH 认证信息，请检查系统密钥库是否可用及本机存储权限。' }
+    }
     const failure = persist(next, viewAfterAppend(view, draft, newId))
-    if (failure) return failure
+    if (failure) {
+      if (draft.kind === 'connection') {
+        try { await window.novaCredentials?.remove([newId]) }
+        catch { return `${failure} 加密认证信息清理失败，请检查本机存储权限。` }
+      }
+      return failure
+    }
     setQuery('')
     setStatus(`已保存“${draft.name}”。`)
+    if (draft.kind === 'connection' && ssh?.connect) onConnect({ assetId: newId, host: draft.host, port: draft.port, username: draft.username })
     return null
   }
   const move = (source: string, parentId: string | null) => {
@@ -82,7 +93,7 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
       const directory = parseLocalDirectory(selected)
       if (!directory) throw new Error('Invalid directory')
       const name = (directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory).slice(0, 80)
-      const failure = save({ kind: 'local', name, parentId: null, directory })
+      const failure = await save({ kind: 'local', name, parentId: null, directory })
       if (failure) { setError(failure); return }
       onOpenLocal(directory, name)
     } catch { setError('无法选择本地目录，请重新尝试。') }
@@ -152,17 +163,32 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
                     }
                   }}>
                   {asset.kind === 'connection' ? (
-                    <SshConnectionDialog disabled={atLimit} endpoint={asset} onConnect={onConnect} trigger={
-                      <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit}
-                        onClick={() => updateView({ ...view, currentGroupId: asset.parentId })}
-                        title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `${asset.name} · ${asset.username}@${asset.host}:${asset.port}`} aria-label={`连接 ${asset.name}`}>
-                        <ServerIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
-                      </Button>
-                    } />
+                    <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit}
+                      onClick={() => updateView({ ...view, currentGroupId: asset.parentId })}
+                      onDoubleClick={() => onConnect({ assetId: asset.id, host: asset.host, port: asset.port, username: asset.username })}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          if (!event.repeat) {
+                            updateView({ ...view, currentGroupId: asset.parentId })
+                            onConnect({ assetId: asset.id, host: asset.host, port: asset.port, username: asset.username })
+                          }
+                        }
+                      }}
+                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `双击连接 · ${asset.name} · ${asset.username}@${asset.host}:${asset.port}`} aria-label={`连接 ${asset.name}`}>
+                      <ServerIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
+                    </Button>
                   ) : asset.kind === 'local' ? (
                     <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit} aria-label={`连接 ${asset.name}`}
-                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `${asset.name} · ${asset.directory}`}
-                      onClick={() => { updateView({ ...view, currentGroupId: asset.parentId }); onOpenLocal(asset.directory, asset.name) }}>
+                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `双击连接 · ${asset.name} · ${asset.directory}`}
+                      onClick={() => updateView({ ...view, currentGroupId: asset.parentId })}
+                      onDoubleClick={() => onOpenLocal(asset.directory, asset.name)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          if (!event.repeat) { updateView({ ...view, currentGroupId: asset.parentId }); onOpenLocal(asset.directory, asset.name) }
+                        }
+                      }}>
                       <TerminalIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
                     </Button>
                   ) : (
@@ -231,8 +257,19 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
         </>}
       </nav>
       <p role="status" className="sr-only">{status}</p>
-      {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} atLimit={atLimit} onConnect={onConnect} onSave={save} onClose={closeDialog} />}
-      {action && <AssetActionDialog action={action} assets={assets} onSave={(next) => persist(next, view)} onClose={closeDialog} />}
+      {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} atLimit={atLimit} onSave={save} onClose={closeDialog} />}
+      {action && <AssetActionDialog action={action} assets={assets} onSave={async (next) => {
+        const removed = assets.filter((asset) => asset.kind === 'connection' && !next.some((item) => item.id === asset.id)).map((asset) => asset.id)
+        const failure = persist(next, view)
+        if (failure) return failure
+        if (removed.length) {
+          try {
+            if (!window.novaCredentials) throw new Error('Desktop credential API unavailable')
+            await window.novaCredentials.remove(removed)
+          } catch { setError('资产已删除，但加密认证信息清理失败，请检查本机存储权限。') }
+        }
+        return null
+      }} onClose={closeDialog} />}
     </aside>
   )
 }

@@ -10,14 +10,14 @@ import { assetSubtreeIds, deleteAsset, groupOptions, moveAsset, renameAsset, typ
 export type AssetAction = { type: 'rename' | 'move' | 'delete'; id: string }
 
 export function AssetActionDialog({ action, assets, onSave, onClose }: {
-  action: AssetAction; assets: Asset[]; onSave: (assets: Asset[]) => string | null; onClose: () => void
+  action: AssetAction; assets: Asset[]; onSave: (assets: Asset[]) => Promise<string | null>; onClose: () => void
 }) {
   const [error, setError] = useState('')
   const id = useId()
   const asset = assets.find((item) => item.id === action.id)
   if (!asset) return null
-  const save = (next: Asset[] | null) => {
-    const failure = next ? onSave(next) : '无法修改，请检查名称、所属分组或层级限制。'
+  const save = async (next: Asset[] | null) => {
+    const failure = next ? await onSave(next) : '无法修改，请检查名称、所属分组或层级限制。'
     if (failure) { setError(failure); return }
     onClose()
   }

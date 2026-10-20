@@ -11,9 +11,14 @@ export type SshOptions = {
 }
 
 export type SshEndpoint = Pick<SshOptions, 'host' | 'port' | 'username'>
+export type SavedSshConnection = SshEndpoint & { assetId: string }
+
+export function credentialId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(value)
+}
 
 export type ClientMessage =
-  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; cwd?: string }
+  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; savedSsh?: SavedSshConnection; cwd?: string }
   | { type: 'host-key-response'; fingerprint: string; accept: boolean }
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number }
@@ -81,6 +86,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         ? { type: 'host-key-response', fingerprint: value.fingerprint, accept: value.accept } : null
     case 'start': {
       if (!dimension(value.cols, 500) || !dimension(value.rows, 300)) return null
+      if (value.savedSsh !== undefined) {
+        const endpoint = parseSshEndpoint(value.savedSsh)
+        if (value.ssh !== undefined || value.cwd !== undefined || !endpoint
+          || !isRecord(value.savedSsh) || !credentialId(value.savedSsh.assetId)) return null
+        return { type: 'start', cols: value.cols, rows: value.rows, savedSsh: { ...endpoint, assetId: value.savedSsh.assetId } }
+      }
       if (value.ssh === undefined) {
         if (value.cwd === undefined) return { type: 'start', cols: value.cols, rows: value.rows }
         const cwd = parseLocalDirectory(value.cwd)

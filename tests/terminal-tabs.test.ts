@@ -69,9 +69,9 @@ test('stale selection or close events cannot affect another session', () => {
 
 test('SSH tabs share the limit and closing them preserves local tabs without retaining credentials', () => {
   const local = openTabs(1)
-  let state = terminalTabsReducer(local, { type: 'open', ssh: { host: 'server.invalid', port: 22, username: 'operator' } })
+  let state = terminalTabsReducer(local, { type: 'open', ssh: { assetId: 'saved-server', host: 'server.invalid', port: 22, username: 'operator' } })
   assert.equal(state.activeId, 'ssh-2')
-  assert.deepEqual(state.tabs[1]?.target, { kind: 'ssh', host: 'server.invalid', port: 22, username: 'operator' })
+  assert.deepEqual(state.tabs[1]?.target, { kind: 'ssh', assetId: 'saved-server', host: 'server.invalid', port: 22, username: 'operator' })
   state = terminalTabsReducer(state, { type: 'close', id: 'ssh-2' })
   assert.equal(state.activeId, 'local-1')
   assert.equal(state.tabs[0], local.tabs[0])

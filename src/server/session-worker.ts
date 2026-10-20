@@ -63,6 +63,7 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
       if (ssh) { ssh.handle(message); return }
       switch (message.type) {
         case 'start': {
+          if (message.savedSsh) { fail('SSH 连接引用必须由主进程解析。'); return }
           if (pty) { fail('终端会话已经启动。'); return }
           if (message.ssh) {
             ssh = createSshSession(message.ssh, message.cols, message.rows, knownHosts, (output) => {

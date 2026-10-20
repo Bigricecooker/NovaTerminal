@@ -22,6 +22,13 @@ app.once('browser-window-created', (_event, window) => {
       const element = document.querySelector(${JSON.stringify(selector)}); element.scrollIntoView({block:'nearest'});
       const r = element.getBoundingClientRect(); return {x:r.left + r.width * ${fraction}, y:r.top + r.height/2};
     })()`)
+    const pointerClick = async (selector, clickCount = 1) => {
+      window.focus()
+      const point = await rect(selector)
+      page.sendInputEvent({type:'mouseDown', ...point, button:'left', clickCount})
+      page.sendInputEvent({type:'mouseUp', ...point, button:'left', clickCount})
+      await delay(60)
+    }
     const menu = async (id) => {
       window.focus()
       const point = await rect(row(id))
@@ -65,7 +72,7 @@ app.once('browser-window-created', (_event, window) => {
       await wait('Boolean(document.querySelector(\'[role="dialog"] form\'))')
       assert.equal(await evaluate('document.querySelector(\'[role="dialog"] select[name="parentId"]\').value'), '')
       assert.equal(await evaluate('document.querySelector(\'[role="dialog"] option[value=""]\').textContent'), '未分组')
-      await fill({name:'独立新增', host:'example.invalid', port:'22', username:'test'}, 'save')
+      await fill({name:'独立新增', host:'example.invalid', port:'22', username:'test', password:'test-only'}, 'save')
       await wait('!document.querySelector(\'[role="dialog"]\')')
       const addedId = await stored('data.assets.find(a => a.name === "独立新增").id')
       assert.equal(await stored('data.assets.find(a => a.id === ' + JSON.stringify(addedId) + ').parentId'), null)
@@ -187,12 +194,26 @@ app.once('browser-window-created', (_event, window) => {
       await wait('!document.querySelector(\'[role="alertdialog"]\')')
       assert.equal(await stored('data.assets.some(a => ["spare","branch","conn"].includes(a.id))'), false)
       assert.equal(await stored('data.assets.some(a => a.id === "outside")'), true)
-      await click('[data-asset-row="outside"] button')
-      await wait('Boolean(document.querySelector(\'[role="dialog"] input[name="password"]\'))')
-      await evaluate(`document.querySelector('[role="dialog"] input[name="password"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:200,clientY:200}))`)
-      assert.equal(await evaluate('Boolean(document.querySelector(\'[role="menu"]\'))'), false)
-      await click('[role="dialog"] button[type="button"]')
-      await wait('!document.querySelector(\'[role="dialog"]\')')
+      await pointerClick('[data-asset-row="outside"] button')
+      assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false, 'A single SSH click must not open authentication')
+      assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), 0)
+      await pointerClick('[data-asset-row="outside"] button', 2)
+      await wait('document.querySelector(\'[role="tabpanel"]\')?.textContent.includes("旧连接或凭据失效")')
+      assert.equal(await evaluate('document.querySelectorAll(\'[role="dialog"]\').length'), 0)
+      assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), 1)
+      await click('[data-session-tab] button[aria-label^="关闭"]')
+      await wait('!document.querySelector("[data-session-tab]")')
+      for (const keyCode of ['Return', 'Space']) {
+        await evaluate('document.querySelector(\'[data-asset-row="outside"] button\').focus()')
+        page.sendInputEvent({type:'keyDown', keyCode})
+        page.sendInputEvent({type:'keyUp', keyCode})
+        await wait('document.querySelector(\'[role="tabpanel"]\')?.textContent.includes("旧连接或凭据失效")')
+        assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false)
+        await click('[data-session-tab] button[aria-label^="关闭"]')
+        await wait('!document.querySelector("[data-session-tab]")')
+      }
+      loaded = once(page, 'did-finish-load'); page.reload(); await loaded
+      await wait('Boolean(document.querySelector(\'[data-asset-row="outside"]\'))')
       window.setSize(1200,800); await delay(100)
       await evaluate('window.__ui = {events:[],output:""}; window.novaTerminal.onEvent(event => { window.__ui.events.push(event); if(event.message?.type === "output") window.__ui.output += event.message.data; }); void 0')
       await click('button[aria-label="新建本地终端"]'); await click('button[aria-label="新建本地终端"]')

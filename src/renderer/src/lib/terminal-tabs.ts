@@ -1,9 +1,9 @@
-import { MAX_SESSIONS, type SshOptions } from '../../../shared/terminal-protocol.ts'
+import { MAX_SESSIONS, type SavedSshConnection } from '../../../shared/terminal-protocol.ts'
 
-export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & Pick<SshOptions, 'host' | 'port' | 'username'>)
+export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & SavedSshConnection)
 type TerminalTab = { id: string; label: string; target: TerminalTarget }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
-type TabAction = { type: 'open'; ssh?: Pick<SshOptions, 'host' | 'port' | 'username'>; local?: { directory: string; name: string } }
+type TabAction = { type: 'open'; ssh?: SavedSshConnection; local?: { directory: string; name: string } }
   | { type: 'select' | 'close'; id: string }
   | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
 

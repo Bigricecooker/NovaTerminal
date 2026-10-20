@@ -1,4 +1,4 @@
-const { app, dialog } = require('electron')
+const { app, dialog, safeStorage, utilityProcess } = require('electron')
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -7,8 +7,20 @@ const ssh2 = require('ssh2')
 
 const shellPids = new Set()
 const sshConnections = new Set()
+const liveWorkers = new Set()
+const originalFork = utilityProcess.fork
+utilityProcess.fork = (...args) => {
+  const worker = originalFork.apply(utilityProcess, args)
+  liveWorkers.add(worker)
+  worker.once('exit', () => liveWorkers.delete(worker))
+  return worker
+}
 let sshServer
 const delay = (ms) => new Promise((done) => setTimeout(done, ms))
+const waitWorkers = async (maximum) => {
+  const until = Date.now() + 8_000
+  while (liveWorkers.size > maximum) { if (Date.now() >= until) throw new Error('Closed session workers did not exit'); await delay(30) }
+}
 const closeTestServer = async () => {
   for (const connection of sshConnections) connection.end()
   if (sshServer?.listening) await new Promise((done) => sshServer.close(done))
@@ -18,6 +30,16 @@ app.on('browser-window-created', (_event, window) => {
   window.webContents.once('did-finish-load', async () => {
     try {
       const evaluate = (source) => window.webContents.executeJavaScript(source)
+      const pointerClick = async (selector, clickCount = 1) => {
+        window.focus()
+        const point = await evaluate(`(() => {
+          const element = document.querySelector(${JSON.stringify(selector)}); element.scrollIntoView({block:'nearest'});
+          const r = element.getBoundingClientRect(); return {x:Math.round(r.left + r.width/2),y:Math.round(r.top + r.height/2)};
+        })()`)
+        window.webContents.sendInputEvent({type:'mouseDown', ...point, button:'left', clickCount})
+        window.webContents.sendInputEvent({type:'mouseUp', ...point, button:'left', clickCount})
+        await delay(60)
+      }
       const clickWindowButton = async (label) => {
         window.focus()
         await delay(100)
@@ -129,11 +151,28 @@ app.on('browser-window-created', (_event, window) => {
         const form = document.querySelector('[role="dialog"] form');
         form.elements.name.value = '仅保存 SSH'; form.elements.host.value = 'example.invalid'; form.elements.username.value = 'test';
         form.elements.privateKey.value = 'test-only-private-key'; form.elements.passphrase.value = 'test-only-passphrase';
-        form.requestSubmit(form.querySelector('button[value="save"]'));
       })()`)
+      const vaultDirectory = path.join(app.getPath('userData'), 'ssh-credentials', process.env.NOVA_DEV_SERVER ? 'development' : 'desktop')
+      const originalEncryptionAvailable = safeStorage.isEncryptionAvailable
+      safeStorage.isEncryptionAvailable = () => false
+      try {
+        await evaluate('document.querySelector(\'[role="dialog"] form\').requestSubmit(document.querySelector(\'[role="dialog"] button[value="save"]\'))')
+        await wait('document.querySelector(\'[role="dialog"]\').textContent.includes("无法安全保存")')
+        assert.equal(await evaluate('localStorage.getItem("novaterminal.assets.v1")'), null)
+        assert.equal(await fs.stat(vaultDirectory).then(() => true, () => false), false)
+      } finally { safeStorage.isEncryptionAvailable = originalEncryptionAvailable }
+      await evaluate('window.__originalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = () => {throw new Error("test quota")}; void 0')
+      await evaluate('document.querySelector(\'[role="dialog"] form\').requestSubmit(document.querySelector(\'[role="dialog"] button[value="save"]\'))')
+      await wait('document.querySelector(\'[role="dialog"]\').textContent.includes("保存失败")')
+      assert.deepEqual(await fs.readdir(vaultDirectory), [], 'Failed asset persistence must roll back encrypted credentials')
+      await evaluate('Storage.prototype.setItem = window.__originalSetItem; document.querySelector(\'[role="dialog"] form\').requestSubmit(document.querySelector(\'[role="dialog"] button[value="save"]\'))')
       await wait('!document.querySelector(\'[role="dialog"]\')')
       assert.equal(await evaluate('window.__smoke.events.filter(e => e.message?.type === "ready").length'), readyBeforeSave)
       assert.equal(await evaluate('localStorage.getItem("novaterminal.assets.v1").includes("test-only")'), false)
+      assert.equal(await evaluate('typeof window.novaCredentials.load'), 'undefined')
+      const encryptedPrivateKey = await fs.readFile(path.join(vaultDirectory, (await fs.readdir(vaultDirectory))[0]))
+      assert.equal(encryptedPrivateKey.includes(Buffer.from('test-only-private-key')), false)
+      assert.equal(encryptedPrivateKey.includes(Buffer.from('test-only-passphrase')), false)
       await evaluate(`document.querySelector('button[aria-label="添加连接"]').click()`)
       await wait('Boolean(document.querySelector(\'[role="dialog"] input[name="password"]\'))')
       window.show(); window.focus()
@@ -221,15 +260,50 @@ app.on('browser-window-created', (_event, window) => {
         await wait('window.__smoke.output.includes("NOVA_CWD_OK")')
         await evaluate('document.querySelector(\'button[aria-label="关闭项目 目录"]\').click()')
         await wait(`document.querySelectorAll('[data-session-tab]').length === ${beforeTabs}`)
-        await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').click()')
+        await waitWorkers(beforeTabs)
+        await pointerClick('button[aria-label="连接 项目 目录"]')
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs, 'A single local asset click must not open a session')
+        assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false)
+        await pointerClick('button[aria-label="连接 项目 目录"]', 2)
         await wait(`window.__smoke.events.filter(e => e.message?.type === 'ready').length === ${readyBefore + 2}`)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs + 1, 'A double click must open exactly one session')
+        await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').focus()')
+        await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').dispatchEvent(new KeyboardEvent("keydown", {key:"Enter",repeat:true,bubbles:true,cancelable:true}))')
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs + 1, 'A repeated key must not open a session even below the session limit')
+        window.webContents.sendInputEvent({type:'keyDown', keyCode:'Return'})
+        window.webContents.sendInputEvent({type:'keyUp', keyCode:'Return'})
+        await wait(`window.__smoke.events.filter(e => e.message?.type === 'ready').length === ${readyBefore + 3}`)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs + 2)
+        assert.equal(await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').disabled'), true)
+        await pointerClick('button[aria-label="连接 项目 目录"]', 2)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs + 2, 'A disabled asset must not connect at the session limit')
         await fs.writeFile(path.join(__dirname, '../test-results/local-connection.png'), (await window.webContents.capturePage()).toPNG())
-        await closeTestServer()
         const loaded = once(window.webContents, 'did-finish-load'); window.webContents.reload(); await loaded
         await wait('Boolean(document.querySelector(\'button[aria-label="连接 项目 目录"]\'))')
+        await waitWorkers(0)
         assert.equal(await evaluate('Boolean(document.querySelector(\'button[aria-label="资产根目录"]\'))'), false)
         assert.equal(await evaluate('Boolean(document.querySelector(\'button[aria-label="未分组"]\'))'), false)
         assert.equal(await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').closest("li").parentElement.parentElement.matches(\'nav[aria-label="连接和分组"]\')'), true)
+        await evaluate('window.__reopen = []; window.novaTerminal.onEvent(e => window.__reopen.push(e)); void 0')
+        await pointerClick('button[aria-label="连接 测试 SSH"]')
+        assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), 0)
+        await pointerClick('button[aria-label="连接 测试 SSH"]', 2)
+        await wait('window.__reopen.some(e => e.message?.type === "ready")')
+        assert.equal(await evaluate('window.__reopen.filter(e => e.message?.type === "ready").length'), 1)
+        assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false)
+        assert.equal(await evaluate('window.__reopen.some(e => ["error","host-key"].includes(e.message?.type))'), false)
+        const savedSsh = await evaluate('JSON.parse(localStorage.getItem("novaterminal.assets.v1")).assets.find(a => a.name === "测试 SSH")')
+        const encryptedPassword = await fs.readFile(path.join(vaultDirectory, `asset-${savedSsh.id}.bin`))
+        assert.equal(encryptedPassword.includes(Buffer.from('test-only')), false)
+        await evaluate(`(() => { const row = document.querySelector('[data-asset-row="${savedSsh.id}"]'); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:40,clientY:210})); })()`)
+        await wait('Boolean(document.querySelector(\'[role="menu"]\'))')
+        await evaluate('Array.from(document.querySelectorAll(\'[role="menuitem"]\')).find(item => item.textContent.trim() === "删除").click()')
+        await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+        await evaluate('document.querySelector(\'[data-slot="alert-dialog-action"]\').click()')
+        await wait('!document.querySelector(\'[role="alertdialog"]\')')
+        assert.equal(await fs.stat(path.join(vaultDirectory, `asset-${savedSsh.id}.bin`)).then(() => true, () => false), false)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), 1, 'Deleting an asset must preserve its live session')
       } finally { dialog.showOpenDialog = originalDialog }
       console.log('Desktop smoke passed: unified title bar, window button input, state sync, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication, Unicode paste, directory picker cancellation, save failure, local cwd, reopen and asset restoration.')
       const closed = once(window, 'closed')

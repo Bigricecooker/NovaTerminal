@@ -6,7 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '@shared/terminal-protocol'
+import { SSH_START_TIMEOUT, type ClientMessage, type ServerMessage } from '@shared/terminal-protocol'
 import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
@@ -35,9 +35,8 @@ function terminalTheme(): ITheme {
   }
 }
 
-export function TerminalSession({ dark, active, label, id, target, takeSshOptions }: {
-  dark: boolean; active: boolean; label: string; id: string; target: TerminalTarget
-  takeSshOptions: (id: string) => SshOptions | undefined
+export function TerminalSession({ dark, active, label, target }: {
+  dark: boolean; active: boolean; label: string; target: TerminalTarget
 }) {
   const container = useRef<HTMLDivElement>(null)
   const controls = useRef<Controls | null>(null)
@@ -93,9 +92,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       if (!started) {
         started = true
         if (target.kind === 'ssh') {
-          const ssh = takeSshOptions(id)
-          if (!ssh) { stop('error', 'SSH 认证信息已释放，请新建连接。'); return }
-          send({ type: 'start', cols, rows, ssh })
+          send({ type: 'start', cols, rows, savedSsh: { assetId: target.assetId, host: target.host, port: target.port, username: target.username } })
         } else send({ type: 'start', cols, rows, ...(target.cwd ? { cwd: target.cwd } : {}) })
       } else if (ready && visible) {
         send({ type: 'resize', cols, rows })
@@ -155,7 +152,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       open: fitTerminal, message: receiveMessage,
       error: () => stop('error', '无法连接终端会话，请重新打开终端。'),
       close: () => stop('closed', '连接已断开；可通过右上角图标新建终端。'),
-    })
+    }, window.novaTerminal)
     controls.current = {
       terminal,
       fit: scheduleFit,
@@ -178,7 +175,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
       terminal.dispose()
       controls.current = null
     }
-  }, [id, target, takeSshOptions])
+  }, [target])
 
   useEffect(() => {
     activeRef.current = active

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, type DesktopDirectoryApi, type DesktopEvent, type DesktopTerminalApi, type DesktopWindowApi, type WindowState } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, type DesktopCredentialApi, type DesktopDirectoryApi, type DesktopEvent, type DesktopTerminalApi, type DesktopWindowApi, type WindowState } from '../shared/desktop-api.ts'
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
 
 const pending = new Map<string, number>()
@@ -40,3 +40,12 @@ const windowApi: DesktopWindowApi = {
 contextBridge.exposeInMainWorld('novaWindow', windowApi)
 const directoryApi: DesktopDirectoryApi = { pick: () => ipcRenderer.invoke(DIRECTORY_CHANNEL) }
 contextBridge.exposeInMainWorld('novaDirectories', directoryApi)
+const credentialApi: DesktopCredentialApi = {
+  save: (id, options) => {
+    const raw = JSON.stringify(options)
+    if (raw.length > 262_144) return Promise.reject(new Error('SSH credential size limit exceeded'))
+    return ipcRenderer.invoke(CREDENTIAL_CHANNELS.save, id, raw)
+  },
+  remove: (ids) => ipcRenderer.invoke(CREDENTIAL_CHANNELS.remove, ids),
+}
+contextBridge.exposeInMainWorld('novaCredentials', credentialApi)

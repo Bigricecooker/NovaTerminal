@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useRef, useState } from 'react'
+import { useReducer, useRef, useState } from 'react'
 import { cn } from 'cn'
 import { createPortal } from 'react-dom'
 import { ServerIcon, TerminalIcon, XIcon } from 'lucide-react'
@@ -7,7 +7,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TerminalSession } from '@/components/terminal-session'
 import { AssetSidebar } from '@/components/asset-sidebar'
-import { MAX_SESSIONS, type SshOptions } from '@shared/terminal-protocol'
+import { MAX_SESSIONS, type SavedSshConnection } from '@shared/terminal-protocol'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
 const TAB_DRAG = 'application/x-novaterminal-tab'
@@ -17,20 +17,11 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
   const dragging = useRef<string | null>(null)
   const activeBeforeDrag = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
-  // Secrets are handed to the session once, never put in tab state or storage.
-  const credentials = useRef(new Map<string, SshOptions>())
-  const takeSshOptions = useCallback((id: string) => {
-    const value = credentials.current.get(id)
-    credentials.current.delete(id)
-    return value
-  }, [])
   const atLimit = state.tabs.length >= MAX_SESSIONS
   const openLabel = atLimit ? `最多打开 ${MAX_SESSIONS} 个终端，请先关闭一个标签` : '新建本地终端'
-  const openSsh = (options: SshOptions) => {
+  const openSsh = (connection: SavedSshConnection) => {
     if (atLimit) return false
-    credentials.current.set(`ssh-${state.nextId}`, options)
-    const { host, port, username } = options
-    dispatch({ type: 'open', ssh: { host, port, username } })
+    dispatch({ type: 'open', ssh: connection })
     return true
   }
   const openLocal = (directory: string, name: string) => {
@@ -104,7 +95,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
                     aria-label={`关闭${tab.label}`}
                     title={`关闭${tab.label}`}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => { credentials.current.delete(tab.id); dispatch({ type: 'close', id: tab.id }) }}
+                    onClick={() => dispatch({ type: 'close', id: tab.id })}
                   >
                     <XIcon />
                   </Button>
@@ -115,7 +106,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
           {state.tabs.map((tab) => (
             // Keep background xterm instances and sessions alive; only closing removes them.
             <TabsContent key={tab.id} value={tab.id} forceMount className="min-h-0 data-[state=active]:flex data-[state=inactive]:hidden">
-              <TerminalSession dark={dark} active={state.activeId === tab.id} label={tab.label} id={tab.id} target={tab.target} takeSshOptions={takeSshOptions} />
+              <TerminalSession dark={dark} active={state.activeId === tab.id} label={tab.label} target={tab.target} />
             </TabsContent>
           ))}
         </Tabs>

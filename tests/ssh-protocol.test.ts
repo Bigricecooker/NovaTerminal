@@ -4,6 +4,16 @@ import { parseClientMessage, parseSshOptions } from '../src/shared/terminal-prot
 
 const options = { host: 'SERVER.invalid', port: 22, username: 'operator', auth: { method: 'password', password: 'test-only' } }
 
+test('saved SSH starts accept only bounded asset references and forbid mixed targets', () => {
+  const savedSsh = { assetId: 'asset-one', host: 'server.invalid', port: 22, username: 'operator' }
+  const start = { type: 'start', cols: 80, rows: 24, savedSsh }
+  assert.deepEqual(parseClientMessage(JSON.stringify(start)), start)
+  for (const assetId of ['', '../escape', 'a/b', 'x'.repeat(65), null]) {
+    assert.equal(parseClientMessage(JSON.stringify({ ...start, savedSsh: { ...savedSsh, assetId } })), null)
+  }
+  for (const extra of [{ cwd: '/tmp' }, { ssh: options }]) assert.equal(parseClientMessage(JSON.stringify({ ...start, ...extra })), null)
+})
+
 test('local start accepts bounded absolute directories and rejects mixed SSH/local starts', () => {
   const start = { type: 'start', cols: 80, rows: 24 }
   for (const cwd of ['C:\\项目 目录', '/tmp/project space', '\\\\server\\share']) {

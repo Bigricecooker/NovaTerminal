@@ -5,8 +5,7 @@ import type { DesktopTerminalApi } from '../../../shared/desktop-api.ts'
 type Events = { open: () => void; message: (message: ServerMessage) => void; close: () => void; error: () => void }
 export type TerminalTransport = { send: (message: ClientMessage) => void; close: () => void; isOpen: () => boolean; buffered: () => number }
 
-export function createTerminalTransport(events: Events): TerminalTransport {
-  const api: DesktopTerminalApi | undefined = window.novaTerminal
+export function createTerminalTransport(events: Events, api: DesktopTerminalApi | undefined): TerminalTransport {
   if (!api) throw new Error('桌面会话接口不可用，请通过 NovaTerminal 桌面应用启动。')
   let id: string | undefined
   let disposed = false
@@ -21,12 +20,16 @@ export function createTerminalTransport(events: Events): TerminalTransport {
       else events.error()
     }
   })
-  void api.open().then((value) => {
-    id = value
-    if (disposed) { void api.close(value).catch(() => {}); return }
-    ready = true
-    events.open()
-  }).catch(() => { if (!disposed) events.error() })
+  // A discarded development effect must not reserve a slot before its replacement opens.
+  queueMicrotask(() => {
+    if (disposed) return
+    void api.open().then((value) => {
+      id = value
+      if (disposed) { void api.close(value).catch(() => {}); return }
+      ready = true
+      events.open()
+    }).catch(() => { if (!disposed) events.error() })
+  })
   return {
     isOpen: () => ready && !disposed,
     buffered: () => pending,

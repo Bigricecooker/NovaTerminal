@@ -39,6 +39,32 @@ class FakeProcess extends EventEmitter implements SessionProcess {
   kill() { this.emit('exit', 0); return true }
 }
 
+test('saved SSH credentials resolve after ownership checks and never return to the renderer', () => {
+  let lookups = 0
+  const children: FakeProcess[] = []
+  const events: DesktopEvent[] = []
+  const sessions = createDesktopSessions(() => { const child = new FakeProcess(); children.push(child); return child }, (_owner, event) => events.push(event), (reference) => {
+    lookups++
+    if (reference.assetId === 'missing') throw new Error('do-not-expose-secret-or-path')
+    return { host: reference.host, port: reference.port, username: reference.username, auth: { method: 'password', password: 'only-the-worker-receives-this' } }
+  })
+  const savedSsh = { assetId: 'saved', host: 'server.invalid', port: 22, username: 'operator' }
+  const start = JSON.stringify({ type: 'start', cols: 80, rows: 24, savedSsh })
+  try {
+    const id = sessions.open(1)
+    assert.throws(() => sessions.send(2, id, start), /unavailable/)
+    assert.equal(lookups, 0)
+    assert.ok(sessions.send(1, id, start))
+    assert.equal(lookups, 1)
+    assert.deepEqual(children[0]?.sent[0], { type: 'start', cols: 80, rows: 24, ssh: { host: savedSsh.host, port: 22, username: savedSsh.username, auth: { method: 'password', password: 'only-the-worker-receives-this' } } })
+    const missing = sessions.open(1)
+    assert.equal(sessions.send(1, missing, JSON.stringify({ type: 'start', cols: 80, rows: 24, savedSsh: { ...savedSsh, assetId: 'missing' } })), false)
+    assert.equal(children.length, 1)
+    assert.ok(!JSON.stringify(events).includes('do-not-expose-secret-or-path'))
+    assert.ok(!JSON.stringify(events).includes('only-the-worker-receives-this'))
+  } finally { sessions.dispose(); for (const child of children) child.kill() }
+})
+
 test('desktop sessions enforce ownership, limits, acknowledgements and isolated cleanup', () => {
   const children: FakeProcess[] = []
   const events: { owner: number; event: DesktopEvent }[] = []
