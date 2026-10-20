@@ -1,4 +1,5 @@
-import { useCallback, useReducer, useRef } from 'react'
+import { useCallback, useReducer, useRef, useState } from 'react'
+import { cn } from 'cn'
 import { createPortal } from 'react-dom'
 import { ServerIcon, TerminalIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,8 +11,13 @@ import { AssetSidebar } from '@/components/asset-sidebar'
 import { MAX_SESSIONS, type SshOptions } from '@shared/terminal-protocol'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
+const TAB_DRAG = 'application/x-novaterminal-tab'
+
 export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; actionContainer: HTMLElement | null }) {
   const [state, dispatch] = useReducer(terminalTabsReducer, initialTerminalTabs)
+  const dragging = useRef<string | null>(null)
+  const activeBeforeDrag = useRef<string | null>(null)
+  const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
   // Secrets are handed to the session once, never put in tab state or storage.
   const credentials = useRef(new Map<string, SshOptions>())
   const takeSshOptions = useCallback((id: string) => {
@@ -56,8 +62,35 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
           <div className="shrink-0 overflow-x-auto border-b px-3 py-1">
             <TabsList variant="line" className="h-10 justify-start" aria-label="终端会话">
               {state.tabs.map((tab) => (
-                <div key={tab.id} className="relative h-full shrink-0">
-                  <TabsTrigger value={tab.id} className="h-full min-w-36 justify-start gap-2 pl-3 pr-10">
+                <div key={tab.id} data-session-tab={tab.id} draggable className={cn('relative h-full shrink-0', drop?.id === tab.id && (drop.position === 'before' ? 'border-l-2 border-ring' : 'border-r-2 border-ring'))}
+                  onMouseDownCapture={() => { activeBeforeDrag.current = state.activeId }}
+                  onDragStart={(event) => {
+                    dragging.current = tab.id
+                    event.dataTransfer.setData(TAB_DRAG, tab.id); event.dataTransfer.effectAllowed = 'move'
+                    if (activeBeforeDrag.current) dispatch({ type: 'select', id: activeBeforeDrag.current })
+                  }}
+                  onDragOver={(event) => {
+                    if (!dragging.current || dragging.current === tab.id || !event.dataTransfer.types.includes(TAB_DRAG)) return
+                    event.preventDefault(); event.dataTransfer.dropEffect = 'move'
+                    const rect = event.currentTarget.getBoundingClientRect()
+                    setDrop({ id: tab.id, position: event.clientX < rect.left + rect.width / 2 ? 'before' : 'after' })
+                  }}
+                  onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget instanceof Node ? event.relatedTarget : null)) setDrop(null) }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const source = dragging.current
+                    if (source && event.dataTransfer.getData(TAB_DRAG) === source && drop?.id === tab.id) dispatch({ type: 'move', id: source, targetId: tab.id, position: drop.position })
+                    dragging.current = null; setDrop(null)
+                  }}
+                  onDragEnd={() => { dragging.current = null; setDrop(null) }}>
+                  <TabsTrigger value={tab.id} className="h-full min-w-36 justify-start gap-2 pl-3 pr-10" title="拖动调整顺序；Ctrl+Shift+←/→ 也可移动"
+                    onKeyDown={(event) => {
+                      if (!event.ctrlKey || !event.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return
+                      event.preventDefault()
+                      const index = state.tabs.findIndex((item) => item.id === tab.id)
+                      const target = state.tabs[index + (event.key === 'ArrowLeft' ? -1 : 1)]
+                      if (target) dispatch({ type: 'move', id: tab.id, targetId: target.id, position: event.key === 'ArrowLeft' ? 'before' : 'after' })
+                    }}>
                     {tab.target.kind === 'ssh' ? <ServerIcon aria-hidden="true" /> : <TerminalIcon aria-hidden="true" />}
                     <span className="max-w-40 truncate">{tab.label}</span>
                   </TabsTrigger>

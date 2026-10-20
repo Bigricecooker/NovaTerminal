@@ -3,7 +3,9 @@ import { MAX_SESSIONS, type SshOptions } from '../../../shared/terminal-protocol
 export type TerminalTarget = { kind: 'local' } | ({ kind: 'ssh' } & Pick<SshOptions, 'host' | 'port' | 'username'>)
 type TerminalTab = { id: string; label: string; target: TerminalTarget }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
-type TabAction = { type: 'open'; ssh?: Pick<SshOptions, 'host' | 'port' | 'username'> } | { type: 'select' | 'close'; id: string }
+type TabAction = { type: 'open'; ssh?: Pick<SshOptions, 'host' | 'port' | 'username'> }
+  | { type: 'select' | 'close'; id: string }
+  | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
 
 export const initialTerminalTabs: TerminalTabs = { tabs: [], activeId: null, nextId: 1 }
 
@@ -18,6 +20,14 @@ export function terminalTabsReducer(state: TerminalTabs, action: TabAction): Ter
     }
     case 'select':
       return state.tabs.some((tab) => tab.id === action.id) ? { ...state, activeId: action.id } : state
+    case 'move': {
+      const source = state.tabs.find((tab) => tab.id === action.id)
+      if (!source || action.id === action.targetId || !state.tabs.some((tab) => tab.id === action.targetId)) return state
+      const tabs = state.tabs.filter((tab) => tab.id !== action.id)
+      const index = tabs.findIndex((tab) => tab.id === action.targetId) + Number(action.position === 'after')
+      tabs.splice(index, 0, source)
+      return tabs.every((tab, i) => tab === state.tabs[i]) ? state : { ...state, tabs }
+    }
     case 'close': {
       const index = state.tabs.findIndex((tab) => tab.id === action.id)
       if (index === -1) return state

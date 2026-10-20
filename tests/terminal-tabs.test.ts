@@ -67,3 +67,24 @@ test('SSH tabs share the limit and closing them preserves local tabs without ret
   assert.equal(state.activeId, 'local-1')
   assert.equal(state.tabs[0], local.tabs[0])
 })
+
+test('moving tabs retains session objects, active identity and next-id counter in both directions', () => {
+  const original = terminalTabsReducer(openTabs(3), { type: 'select', id: 'local-2' })
+  let state = terminalTabsReducer(original, { type: 'move', id: 'local-3', targetId: 'local-1', position: 'before' })
+  assert.deepEqual(state.tabs.map((tab) => tab.id), ['local-3', 'local-1', 'local-2'])
+  assert.equal(state.activeId, original.activeId)
+  assert.equal(state.nextId, original.nextId)
+  for (const tab of state.tabs) assert.equal(tab, original.tabs.find((item) => item.id === tab.id))
+  state = terminalTabsReducer(state, { type: 'move', id: 'local-3', targetId: 'local-2', position: 'after' })
+  assert.deepEqual(state.tabs, original.tabs)
+  state = terminalTabsReducer(state, { type: 'move', id: 'local-2', targetId: 'local-1', position: 'before' })
+  state = terminalTabsReducer(state, { type: 'close', id: 'local-2' })
+  assert.equal(state.activeId, 'local-1', 'Closing follows the displayed neighbour after a move')
+})
+
+test('stale, identical and no-op tab drops leave the state unchanged', () => {
+  const state = openTabs(2)
+  for (const [id, targetId, position] of [['missing', 'local-1', 'before'], ['local-1', 'missing', 'after'], ['local-1', 'local-1', 'after'], ['local-1', 'local-2', 'before']] as const) {
+    assert.equal(terminalTabsReducer(state, { type: 'move', id, targetId, position }), state)
+  }
+})
