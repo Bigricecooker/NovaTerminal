@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TerminalSession } from '@/components/terminal-session'
-import { SshConnectionDialog } from '@/components/ssh-connection-dialog'
 import { AssetSidebar } from '@/components/asset-sidebar'
 import { MAX_SESSIONS, type SshOptions } from '@shared/terminal-protocol'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
@@ -34,6 +33,11 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
     dispatch({ type: 'open', ssh: { host, port, username } })
     return true
   }
+  const openLocal = (directory: string, name: string) => {
+    if (atLimit) return false
+    dispatch({ type: 'open', local: { directory, name } })
+    return true
+  }
 
   return (
     <>
@@ -42,19 +46,18 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
           <Button variant="ghost" size="icon" aria-label={openLabel} title={openLabel} disabled={atLimit} onClick={() => dispatch({ type: 'open' })}>
             <TerminalIcon />
           </Button>
-          <SshConnectionDialog disabled={atLimit} onConnect={openSsh} />
         </>,
         actionContainer,
       )}
       <div className="flex min-h-0 flex-1">
-        <AssetSidebar atLimit={atLimit} onConnect={openSsh} />
+        <AssetSidebar atLimit={atLimit} onConnect={openSsh} onOpenLocal={openLocal} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {state.tabs.length === 0 ? (
         <Empty className="min-h-0 flex-1" aria-label="终端工作区">
           <EmptyHeader>
             <EmptyMedia variant="icon"><TerminalIcon /></EmptyMedia>
             <EmptyTitle>终端</EmptyTitle>
-            <EmptyDescription>从左侧资产连接服务器，或通过右上角图标打开本地终端和 SSH 连接。每个标签是独立会话。</EmptyDescription>
+            <EmptyDescription>从左侧添加 SSH 或本地连接，也可通过右上角图标打开本地终端。每个标签是独立会话。</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (

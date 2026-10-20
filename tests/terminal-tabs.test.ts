@@ -9,6 +9,15 @@ function openTabs(count: number) {
   return state
 }
 
+test('saved local connections carry their directory and label through tab moves', () => {
+  let state = terminalTabsReducer(openTabs(1), { type: 'open', local: { directory: 'C:\\work\\项目', name: '项目' } })
+  const tab = state.tabs[1]
+  assert.equal(tab?.label, '项目')
+  assert.deepEqual(tab?.target, { kind: 'local', cwd: 'C:\\work\\项目' })
+  state = terminalTabsReducer(state, { type: 'move', id: 'local-2', targetId: 'local-1', position: 'before' })
+  assert.equal(state.tabs[0], tab)
+})
+
 test('opens independent tabs and selects each new tab up to the session limit', () => {
   const state = openTabs(MAX_SESSIONS)
   assert.equal(state.tabs.length, MAX_SESSIONS)

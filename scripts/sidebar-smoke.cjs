@@ -33,15 +33,17 @@ app.once('browser-window-created', (_event, window) => {
       await evaluate(`Array.from(document.querySelectorAll('[role="menuitem"]')).find(item => item.textContent.trim() === ${JSON.stringify(label)}).click()`)
       await wait('!document.querySelector(\'[role="menu"]\')')
     }
-    const fill = (fields) => evaluate(`(() => {
+    const fill = (fields, submitter) => evaluate(`(() => {
       const form = document.querySelector('[role="dialog"] form');
       for (const [key,value] of Object.entries(${JSON.stringify(fields)})) form.elements[key].value = value;
-      form.requestSubmit();
+      form.requestSubmit(${submitter ? `form.querySelector('button[value="${submitter}"]')` : ''});
     })()`)
+    const topLevelIds = () => evaluate('Array.from(document.querySelectorAll(\'nav[aria-label="连接和分组"] > ul > li\')).map(item => item.dataset.assetId)')
     let intercepted
     try {
       await wait('Boolean(document.querySelector(\'button[aria-label="添加连接"]\'))')
       const assets = [
+        {kind:'local',id:'local',name:'本地目录',parentId:null,directory:app.getPath('userData')},
         {kind:'group',id:'prod',name:'生产',parentId:null},
         {kind:'group',id:'branch',name:'子分组',parentId:'prod'},
         {kind:'connection',id:'conn',name:'分组连接',parentId:'branch',host:'example.invalid',port:22,username:'test'},
@@ -52,16 +54,36 @@ app.once('browser-window-created', (_event, window) => {
       await evaluate(`localStorage.setItem('novaterminal.assets.v1', ${JSON.stringify(JSON.stringify({version:1, assets}))})`)
       let loaded = once(page, 'did-finish-load'); page.reload(); await loaded
       await wait('Boolean(document.querySelector(\'[data-asset-row="prod"]\'))')
+      const topGroups = ['prod', 'spare', ...Array.from({length:8}, (_,i) => `filler${i}`)]
+      assert.deepEqual(await topLevelIds(), [...topGroups, 'local', 'outside'])
+      assert.equal(await evaluate('Boolean(document.querySelector(\'button[aria-label="未分组"]\'))'), false)
+      assert.equal(await stored('data.assets.some(a => a.kind === "group" && a.name === "未分组")'), false)
       assert.equal(await evaluate(`document.querySelector(${JSON.stringify(group('prod'))}).getAttribute('aria-expanded')`), 'false')
       assert.equal(await evaluate(`document.querySelector(${JSON.stringify(group('spare'))}).getAttribute('aria-expanded')`), 'false')
       await click(group('prod')); await click(group('branch'))
+      await click('button[aria-label="添加连接"]')
+      await wait('Boolean(document.querySelector(\'[role="dialog"] form\'))')
+      assert.equal(await evaluate('document.querySelector(\'[role="dialog"] select[name="parentId"]\').value'), '')
+      assert.equal(await evaluate('document.querySelector(\'[role="dialog"] option[value=""]\').textContent'), '未分组')
+      await fill({name:'独立新增', host:'example.invalid', port:'22', username:'test'}, 'save')
+      await wait('!document.querySelector(\'[role="dialog"]\')')
+      const addedId = await stored('data.assets.find(a => a.name === "独立新增").id')
+      assert.equal(await stored('data.assets.find(a => a.id === ' + JSON.stringify(addedId) + ').parentId'), null)
+      assert.deepEqual(await topLevelIds(), [...topGroups, 'local', 'outside', addedId])
+      assert.equal(await stored('data.assets.filter(a => a.kind === "group").length'), topGroups.length + 1)
+      await menu('branch'); await choose('添加连接')
+      await wait('Boolean(document.querySelector(\'[role="dialog"] form\'))')
+      assert.equal(await evaluate('document.querySelector(\'[role="dialog"] select[name="parentId"]\').value'), '')
+      await click('[role="dialog"] button[type="button"]')
+      await wait('!document.querySelector(\'[role="dialog"]\')')
       await click('button[aria-label="添加分组"]')
       await wait('Boolean(document.querySelector(\'[role="dialog"] form\'))')
       assert.equal(await evaluate('document.querySelector(\'[role="dialog"] select\').value'), 'branch')
       await fill({name:'当前子组'})
       await wait('!document.querySelector(\'[role="dialog"]\')')
       assert.equal(await stored('data.sidebar.expandedIds.includes(data.assets.find(a => a.name === "当前子组").id)'), true)
-      await click('button[aria-label="资产根目录"]')
+      await click('nav[aria-label="连接和分组"]')
+      assert.equal(await stored('data.sidebar.currentGroupId'), null)
       await click('button[aria-label="添加分组"]')
       await wait('Boolean(document.querySelector(\'[role="dialog"] form\'))')
       await fill({name:'其他层级新增', parentId:'spare'})
@@ -101,13 +123,32 @@ app.once('browser-window-created', (_event, window) => {
       assert.equal(await stored('data.assets.find(a => a.id === "branch").parentId'), 'spare')
       assert.equal(await stored('data.assets.find(a => a.id === "conn").parentId'), 'branch')
       await click(group('spare'))
-      await drag(row('outside'), 'button[aria-label="资产根目录"]')
+      await drag(row('outside'), 'nav[aria-label="连接和分组"]', 0.99)
       assert.equal(await stored('data.assets.find(a => a.id === "outside").parentId'), null)
+      await menu('local'); await choose('移动到…')
+      await wait('Boolean(document.querySelector(\'[role="dialog"] select\'))')
+      await fill({value:'branch'})
+      await wait('!document.querySelector(\'[role="dialog"]\')')
+      assert.equal(await stored('data.assets.find(a => a.id === "local").parentId'), 'branch')
+      if (await evaluate(`document.querySelector(${JSON.stringify(group('branch'))}).getAttribute('aria-expanded')`) !== 'true') await click(group('branch'))
+      await menu('local'); await choose('移动到…')
+      await wait('Boolean(document.querySelector(\'[role="dialog"] select\'))')
+      assert.equal(await evaluate('document.querySelector(\'[role="dialog"] option[value=""]\').textContent'), '未分组')
+      await fill({value:''})
+      await wait('!document.querySelector(\'[role="dialog"]\')')
+      assert.equal(await stored('data.assets.find(a => a.id === "local").parentId'), null)
+      assert.deepEqual(await topLevelIds(), [...topGroups, 'local', 'outside', addedId])
       const saved = await stored('data.sidebar')
       loaded = once(page, 'did-finish-load'); page.reload(); await loaded
       await wait('Boolean(document.querySelector(\'[data-asset-row="spare"]\'))')
       assert.deepEqual(await stored('data.sidebar'), saved)
+      assert.deepEqual(await topLevelIds(), [...topGroups, 'local', 'outside', addedId])
+      assert.equal(await stored('data.assets.some(a => a.kind === "group" && a.name === "未分组")'), false)
       assert.equal(await evaluate('document.querySelector(\'[data-asset-row="branch"]\').closest("[data-asset-id]").parentElement.closest("[data-asset-id]").dataset.assetId'), 'spare')
+      window.focus()
+      await evaluate('document.querySelector(\'nav[aria-label="连接和分组"]\').scrollTop = 0; new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      await fs.mkdir(path.join(__dirname,'../test-results'),{recursive:true})
+      await fs.writeFile(path.join(__dirname,'../test-results/sidebar-top-level.png'),(await page.capturePage()).toPNG())
       window.setSize(720,480)
       await delay(150)
       await menu('filler7')
@@ -181,7 +222,7 @@ app.once('browser-window-created', (_event, window) => {
       await wait('document.querySelectorAll("[data-session-tab]").length === 1')
       assert.equal(await evaluate('document.querySelector(\'[role="tab"][data-state="active"]\').textContent.trim()'), '本地终端 1')
       page.debugger.detach()
-      console.log('Desktop smoke passed: sidebar expansion, create scope, search, real drag hierarchy, persisted state, menu placement, rename, move, delete, quota failure and live tab reorder.')
+      console.log('Desktop smoke passed: flat ungrouped SSH/local assets, folders-first order, expansion, create scope, search, real drag hierarchy, persisted state, menu placement, rename, move, delete, quota failure and live tab reorder.')
       const closed = once(window,'closed'); window.close(); await closed
       if (process.platform === 'darwin') app.quit()
     } catch (error) {

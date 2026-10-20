@@ -49,7 +49,7 @@ npm run test:package
 | `src/renderer/src/lib/terminal-transport.ts` | preload 会话传输、待发送量与订阅清理 |
 | `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
 | `src/renderer/src/components/asset-*.tsx` | 资产树、创建、重命名 / 移动 / 删除对话框与右键菜单 |
-| `src/renderer/src/components/ssh-connection-dialog.tsx` | SSH 参数与认证表单 |
+| `src/renderer/src/components/ssh-connection-fields.tsx`、`ssh-connection-dialog.tsx` | 新建与已有 SSH 连接共用的参数 / 认证表单 |
 | `src/renderer/src/components/ui/` | 由官方 CLI 引入的 shadcn/ui 组件 |
 | `src/shared/terminal-protocol.ts` | 共享消息类型、参数校验和资源限额 |
 | `src/renderer/src/lib/terminal-tabs.ts`、`src/renderer/src/lib/assets.ts` | 标签与资产模型 |
@@ -74,7 +74,9 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
 
 ## UI 维护
 
-资产侧栏将资产与展开 / 当前层级状态作为同一工作区文档保存到 `novaterminal.assets.v1`。旧版文档兼容读取，默认不展开；新状态只保留有效分组 ID。所有资产变更和持久展开状态先保存再更新 React 状态，失败时保留原文档与界面。搜索使用独立的临时展开状态，清除搜索不会展开其他分组。
+资产侧栏将资产与展开 / 当前层级状态作为同一工作区文档保存到 `novaterminal.assets.v1`。SSH 沿用 `connection` 类型，本地目录使用 `local` 类型；只保存公开配置。`parentId: null` 的分组和连接共用顶层列表，分组优先、同类按创建顺序排列；“未分组”仅是连接分组选项，不创建同名节点、容器或 ID。列表空白处提供顶层拖放目标，点击空白处清除当前分组选择。旧版文档兼容读取，默认不展开；新状态只保留有效分组 ID。所有资产变更和持久展开状态先保存再更新 React 状态，失败时保留原文档与界面。搜索使用独立的临时展开状态，清除搜索不会展开其他分组。
+
+新建 SSH 的分组下拉框默认“未分组”，可手动选择已有分组；支持仅保存或保存并连接，认证字段不进入资产文档。本地连接通过 `novaDirectories.pick()` 调用无参数目录选择 IPC，主进程限制单次选择并校验来源；取消时不创建连接。资产保存成功后才打开指定目录的固定 Shell，会话进程校验绝对路径与真实目录，失效时明确报错。
 
 资产排序保持分组优先、同类创建顺序；移动只改 `parentId`，不改变源数组顺序。模型统一校验重命名、子树移动和删除，移动必须验证后代深度与循环。原生 HTML 拖放仅传递条目 ID，并核对页面内拖拽来源；右键菜单的“移动到”提供键盘替代。会话标签拖动与键盘排序只更新 reducer 中的数组，保留原标签对象和终端组件，不触发连接建立或持久化凭据。
 
@@ -106,7 +108,7 @@ npm run test:sidebar
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK 和隔离清理 |
 
-`test:desktop` 启动真实 Electron，检查窗口可见性、统一顶栏 / 拖动区域样式、鼠标输入触发最小化 / 最大化 / 还原 / 关闭、外部窗口状态变化同步、深浅主题、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴及退出清理。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
+`test:desktop` 启动真实 Electron，检查窗口可见性、统一顶栏 / 拖动区域样式、鼠标输入触发最小化 / 最大化 / 还原 / 关闭、外部窗口状态变化同步、深浅主题、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴，以及本地目录选择 IPC、取消 / 保存失败、指定目录启动、再次打开 / 资产恢复及退出清理。目录选择测试仅在测试主进程替换系统弹窗返回值，仍经过正式 IPC / preload / utility process；原生选择器的人工操作需另验。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。PTY / SSH 集成测试通过 `tests/helpers/session-client.ts` 驱动正式的桌面会话管理器和会话核心；`tests/fixtures/session-worker.ts` 仅为系统 Node.js 测试提供进程适配，不是另一种应用运行模式。真实 utility process 和 preload 由 Electron 冒烟覆盖。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 

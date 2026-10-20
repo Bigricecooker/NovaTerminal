@@ -59,7 +59,7 @@ export function AssetActionDialog({ action, assets, onSave, onClose }: {
               <FieldLabel htmlFor={id}>{action.type === 'rename' ? '名称' : '所属分组'}</FieldLabel>
               {action.type === 'rename' ? <Input id={id} name="value" defaultValue={asset.name} required maxLength={80} autoFocus /> : (
                 <NativeSelect id={id} name="value" defaultValue={asset.parentId ?? ''} autoFocus>
-                  <NativeSelectOption value="">根目录</NativeSelectOption>
+                  <NativeSelectOption value="">{asset.kind === 'group' ? '无上级分组' : '未分组'}</NativeSelectOption>
                   {groupOptions(assets).filter((group) => moveAsset(assets, asset.id, group.id) !== null).map((group) => (
                     <NativeSelectOption key={group.id} value={group.id}>{group.label}</NativeSelectOption>
                   ))}

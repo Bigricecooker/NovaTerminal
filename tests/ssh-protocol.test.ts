@@ -4,6 +4,17 @@ import { parseClientMessage, parseSshOptions } from '../src/shared/terminal-prot
 
 const options = { host: 'SERVER.invalid', port: 22, username: 'operator', auth: { method: 'password', password: 'test-only' } }
 
+test('local start accepts bounded absolute directories and rejects mixed SSH/local starts', () => {
+  const start = { type: 'start', cols: 80, rows: 24 }
+  for (const cwd of ['C:\\项目 目录', '/tmp/project space', '\\\\server\\share']) {
+    assert.deepEqual(parseClientMessage(JSON.stringify({ ...start, cwd })), { ...start, cwd })
+  }
+  for (const cwd of ['', 'relative', 'C:relative', '/bad\0path', '/bad\npath', '/'.repeat(4097), {}, null]) {
+    assert.equal(parseClientMessage(JSON.stringify({ ...start, cwd })), null)
+  }
+  assert.equal(parseClientMessage(JSON.stringify({ ...start, cwd: '/tmp', ssh: options })), null)
+})
+
 test('SSH protocol validates endpoint and bounded authentication data', () => {
   assert.equal(parseSshOptions(options)?.host, 'server.invalid')
   assert.ok(parseSshOptions({ ...options, host: '::1', port: 1 }))

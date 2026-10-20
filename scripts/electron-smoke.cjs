@@ -1,4 +1,4 @@
-const { app } = require('electron')
+const { app, dialog } = require('electron')
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -106,9 +106,40 @@ app.on('browser-window-created', (_event, window) => {
       await delay(150)
       await fs.mkdir(path.join(__dirname, '../test-results'), { recursive: true })
       await fs.writeFile(path.join(__dirname, '../test-results/electron-smoke.png'), (await window.webContents.capturePage()).toPNG())
-      await evaluate(`document.querySelector('button[aria-label="连接 SSH 服务器"]').click()`)
+      await evaluate(`document.querySelector('button[aria-label="添加连接"]').click()`)
       await wait('Boolean(document.querySelector(\'[role="dialog"]\'))')
       assert.equal(await evaluate('Boolean(document.querySelector(\'input[name="password"]\'))'), true)
+      const readyBeforeSave = await evaluate('window.__smoke.events.filter(e => e.message?.type === "ready").length')
+      await evaluate(`(() => {
+        const select = document.querySelector('[role="dialog"] select[name="authMethod"]');
+        select.value = 'privateKey'; select.dispatchEvent(new Event('change', {bubbles:true}));
+      })()`)
+      await wait('Boolean(document.querySelector(\'[role="dialog"] textarea[name="privateKey"]\'))')
+      window.setSize(720, 480); window.focus()
+      await delay(300)
+      await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+      assert.equal(await evaluate(`(() => {
+        const dialog = document.querySelector('[role="dialog"]').getBoundingClientRect();
+        const button = document.querySelector('[role="dialog"] button[value="connect"]').getBoundingClientRect();
+        return dialog.top >= 0 && button.top >= dialog.top && button.bottom <= dialog.bottom && dialog.bottom <= innerHeight;
+      })()`), true, 'Connection actions must stay visible at the minimum window size')
+      await fs.writeFile(path.join(__dirname, '../test-results/add-connection-small.png'), (await window.webContents.capturePage()).toPNG())
+      window.setSize(1000, 700)
+      await evaluate(`(() => {
+        const form = document.querySelector('[role="dialog"] form');
+        form.elements.name.value = '仅保存 SSH'; form.elements.host.value = 'example.invalid'; form.elements.username.value = 'test';
+        form.elements.privateKey.value = 'test-only-private-key'; form.elements.passphrase.value = 'test-only-passphrase';
+        form.requestSubmit(form.querySelector('button[value="save"]'));
+      })()`)
+      await wait('!document.querySelector(\'[role="dialog"]\')')
+      assert.equal(await evaluate('window.__smoke.events.filter(e => e.message?.type === "ready").length'), readyBeforeSave)
+      assert.equal(await evaluate('localStorage.getItem("novaterminal.assets.v1").includes("test-only")'), false)
+      await evaluate(`document.querySelector('button[aria-label="添加连接"]').click()`)
+      await wait('Boolean(document.querySelector(\'[role="dialog"] input[name="password"]\'))')
+      window.show(); window.focus()
+      await delay(300)
+      assert.equal(await evaluate('document.querySelector(\'[role="dialog"]\').getAttribute("data-state")'), 'open')
+      await fs.writeFile(path.join(__dirname, '../test-results/add-connection.png'), (await window.webContents.capturePage()).toPNG())
       const hostKey = ssh2.utils.generateKeyPairSync('ed25519')
       sshServer = new ssh2.Server({ hostKeys: [hostKey.private] }, (connection) => {
         sshConnections.add(connection)
@@ -130,7 +161,7 @@ app.on('browser-window-created', (_event, window) => {
       sshServer.listen(0, '127.0.0.1')
       await once(sshServer, 'listening')
       const port = sshServer.address().port
-      await evaluate(`(() => { const form = document.querySelector('[role="dialog"] form'); form.elements.host.value = '127.0.0.1'; form.elements.port.value = '${port}'; form.elements.username.value = 'test-user'; form.elements.password.value = 'test-only'; form.requestSubmit() })()`)
+      await evaluate(`(() => { const form = document.querySelector('[role="dialog"] form'); form.elements.name.value = '测试 SSH'; form.elements.host.value = '127.0.0.1'; form.elements.port.value = '${port}'; form.elements.username.value = 'test-user'; form.elements.password.value = 'test-only'; form.requestSubmit(form.querySelector('button[value="connect"]')) })()`)
       await wait("window.__smoke.events.some(e => e.message?.type === 'host-key')")
       await wait("document.body.innerText.includes('信任并连接')")
       await evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === '信任并连接').click()")
@@ -147,8 +178,60 @@ app.on('browser-window-created', (_event, window) => {
       await wait('window.__smoke.output.includes("🚀中文_NOVA_PASTE_OK")')
       await wait(`document.querySelector('[role="tabpanel"][data-state="active"] .xterm-rows')?.textContent.includes('🚀中文_NOVA_PASTE_OK')`)
       await fs.writeFile(path.join(__dirname, '../test-results/electron-review-unicode.png'), (await window.webContents.capturePage()).toPNG())
-      await closeTestServer()
-      console.log('Desktop smoke passed: unified title bar, window button input, state sync, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication and Unicode paste.')
+      // Exercise the native picker IPC through its production handler; only the OS dialog is stubbed in this test process.
+      assert.equal(await evaluate('Boolean(document.querySelector(\'header button[aria-label="连接 SSH 服务器"]\'))'), false)
+      const beforeLocal = await evaluate('localStorage.getItem("novaterminal.assets.v1")')
+      assert.ok(beforeLocal.includes('测试 SSH') && !beforeLocal.includes('test-only'))
+      const beforeTabs = await evaluate('document.querySelectorAll("[data-session-tab]").length')
+      const addLocal = async () => {
+        await evaluate('document.querySelector(\'button[aria-label="添加本地连接"]\').click()')
+        await wait('!document.querySelector(\'button[aria-label="添加本地连接"]\').disabled')
+      }
+      const originalDialog = dialog.showOpenDialog
+      try {
+        dialog.showOpenDialog = async (_owner, options) => {
+          assert.deepEqual(options.properties, ['openDirectory'])
+          return { canceled: true, filePaths: [] }
+        }
+        await addLocal()
+        assert.equal(await evaluate('localStorage.getItem("novaterminal.assets.v1")'), beforeLocal)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs)
+        const directory = path.join(app.getPath('userData'), '项目 目录')
+        await fs.mkdir(directory, { recursive: true })
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] })
+        await evaluate('window.__setItem = Storage.prototype.setItem; Storage.prototype.setItem = () => { throw new Error("test quota") }; void 0')
+        await addLocal()
+        assert.equal(await evaluate('localStorage.getItem("novaterminal.assets.v1")'), beforeLocal)
+        assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs)
+        await evaluate('Storage.prototype.setItem = window.__setItem; void 0')
+        const readyBefore = await evaluate('window.__smoke.events.filter(e => e.message?.type === "ready").length')
+        await addLocal()
+        await wait(`window.__smoke.events.filter(e => e.message?.type === 'ready').length === ${readyBefore + 1}`)
+        const local = await evaluate('JSON.parse(localStorage.getItem("novaterminal.assets.v1")).assets.find(a => a.kind === "local")')
+        assert.equal(local.directory, directory)
+        assert.equal(local.parentId, null)
+        assert.equal(local.name, '项目 目录')
+        assert.equal(await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').closest("li").parentElement.parentElement.matches(\'nav[aria-label="连接和分组"]\')'), true)
+        await evaluate('window.__smoke.local = window.__smoke.events.filter(e => e.message?.type === "ready").at(-1).id')
+        const checkCwd = process.platform === 'win32'
+          ? `if ((Get-Location).Path -eq '${directory.replaceAll("'", "''")}') { [Console]::WriteLine(('NOVA_CWD_' + 'OK')) }\r`
+          : `test "$PWD" = '${directory.replaceAll("'", "'\\''")}' && printf 'NOVA_CWD_%s\\n' OK\r`
+        await delay(400)
+        await evaluate(`window.novaTerminal.send(window.__smoke.local, {type:'input', data:${JSON.stringify(checkCwd)}})`)
+        await wait('window.__smoke.output.includes("NOVA_CWD_OK")')
+        await evaluate('document.querySelector(\'button[aria-label="关闭项目 目录"]\').click()')
+        await wait(`document.querySelectorAll('[data-session-tab]').length === ${beforeTabs}`)
+        await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').click()')
+        await wait(`window.__smoke.events.filter(e => e.message?.type === 'ready').length === ${readyBefore + 2}`)
+        await fs.writeFile(path.join(__dirname, '../test-results/local-connection.png'), (await window.webContents.capturePage()).toPNG())
+        await closeTestServer()
+        const loaded = once(window.webContents, 'did-finish-load'); window.webContents.reload(); await loaded
+        await wait('Boolean(document.querySelector(\'button[aria-label="连接 项目 目录"]\'))')
+        assert.equal(await evaluate('Boolean(document.querySelector(\'button[aria-label="资产根目录"]\'))'), false)
+        assert.equal(await evaluate('Boolean(document.querySelector(\'button[aria-label="未分组"]\'))'), false)
+        assert.equal(await evaluate('document.querySelector(\'button[aria-label="连接 项目 目录"]\').closest("li").parentElement.parentElement.matches(\'nav[aria-label="连接和分组"]\')'), true)
+      } finally { dialog.showOpenDialog = originalDialog }
+      console.log('Desktop smoke passed: unified title bar, window button input, state sync, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication, Unicode paste, directory picker cancellation, save failure, local cwd, reopen and asset restoration.')
       const closed = once(window, 'closed')
       await clickWindowButton('关闭窗口')
       await closed

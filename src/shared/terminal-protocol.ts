@@ -13,7 +13,7 @@ export type SshOptions = {
 export type SshEndpoint = Pick<SshOptions, 'host' | 'port' | 'username'>
 
 export type ClientMessage =
-  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions }
+  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; cwd?: string }
   | { type: 'host-key-response'; fingerprint: string; accept: boolean }
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number }
@@ -33,6 +33,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function dimension(value: unknown, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 2 && value <= max
+}
+
+export function parseLocalDirectory(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || value.length > 4096
+    || Array.from(value).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+    || !(/^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\\\'))) return null
+  return value
 }
 
 export function parseSshEndpoint(value: unknown): SshEndpoint | null {
@@ -74,7 +81,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         ? { type: 'host-key-response', fingerprint: value.fingerprint, accept: value.accept } : null
     case 'start': {
       if (!dimension(value.cols, 500) || !dimension(value.rows, 300)) return null
-      if (value.ssh === undefined) return { type: 'start', cols: value.cols, rows: value.rows }
+      if (value.ssh === undefined) {
+        if (value.cwd === undefined) return { type: 'start', cols: value.cols, rows: value.rows }
+        const cwd = parseLocalDirectory(value.cwd)
+        return cwd ? { type: 'start', cols: value.cols, rows: value.rows, cwd } : null
+      }
+      if (value.cwd !== undefined) return null
       const ssh = parseSshOptions(value.ssh)
       return ssh ? { type: 'start', cols: value.cols, rows: value.rows, ssh } : null
     }

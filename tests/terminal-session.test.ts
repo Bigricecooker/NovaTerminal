@@ -3,6 +3,9 @@ import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { HIGH_WATER } from '../src/shared/terminal-protocol.ts'
 import { sessionHarness } from './helpers/session-client.ts'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const fixtures = new WeakMap<TestContext, ReturnType<typeof sessionHarness>>()
 async function connect(t: TestContext, ack = true) {
@@ -10,6 +13,33 @@ async function connect(t: TestContext, ack = true) {
   if (!fixture) { fixture = sessionHarness(t); fixtures.set(t, fixture) }
   return fixture.connect(ack)
 }
+
+test('local sessions start in the chosen directory and fail on files or missing directories', { timeout: 25_000 }, async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), 'nova-cwd-'))
+  t.after(() => rm(temporary, { recursive: true, force: true }))
+  const directory = join(temporary, '项目 目录')
+  await mkdir(directory)
+  const file = join(temporary, 'file.txt')
+  await writeFile(file, 'test')
+  const client = await connect(t)
+  client.send({ type: 'start', cols: 100, rows: 30, cwd: directory })
+  await client.wait(() => client.messages.some((message) => message.type === 'ready'))
+  await client.wait(() => client.output().length > 0)
+  await delay(200)
+  client.send({ type: 'input', data: process.platform === 'win32'
+    ? `if ((Get-Location).Path -eq '${directory.replaceAll("'", "''")}') { [Console]::WriteLine(('CWD_' + 'OK')) }; exit\r`
+    : `test "$PWD" = '${directory.replaceAll("'", "'\\''")}' && printf 'CWD_%s\\n' OK; exit\r` })
+  await client.wait(() => client.messages.some((message) => message.type === 'exit'))
+  assert.ok(client.output().includes('CWD_OK'))
+  for (const cwd of [file, join(temporary, 'missing')]) {
+    const invalid = await connect(t)
+    invalid.send({ type: 'start', cols: 80, rows: 24, cwd })
+    await invalid.wait(() => invalid.messages.some((message) => message.type === 'error'))
+    assert.ok(invalid.messages.some((message) => message.type === 'error' && message.message.includes('目录')))
+    assert.ok(!invalid.messages.some((message) => message.type === 'ready'))
+    await invalid.close()
+  }
+})
 
 test('desktop sessions reject malformed messages and input before start', async (t) => {
   for (const raw of ['{', JSON.stringify({ type: 'start', cols: -1, rows: 24 }), JSON.stringify({ type: 'input', data: 'exit\r' })]) {

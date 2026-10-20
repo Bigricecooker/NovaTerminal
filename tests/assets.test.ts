@@ -12,6 +12,54 @@ const assets: Asset[] = [
 ]
 const document = (entries: unknown) => ({ version: 1, assets: entries })
 
+test('ungrouped SSH and local connections stay top-level after folders across moves and reloads', () => {
+  const local = { kind: 'local', name: '工作目录', parentId: null, directory: '/work' } as const
+  const withLocal = appendAsset(assets, local, 'local')
+  assert.ok(withLocal)
+  const ssh = { kind: 'connection', name: '新增连接', parentId: null, host: 'host.test', port: 22, username: 'user' } as const
+  const created = appendAsset(withLocal, ssh, 'ssh')
+  assert.ok(created)
+  const grouped = moveAsset(created, 'local', 'asia')
+  assert.ok(grouped)
+  const ungrouped = moveAsset(grouped, 'local', null)
+  assert.ok(ungrouped)
+  const moved = moveAsset(ungrouped, 'api', null)
+  assert.ok(moved)
+  let raw = ''
+  saveAssetWorkspace({ setItem: (_key, value) => { raw = value } }, moved, { expandedIds: ['prod'], currentGroupId: null })
+  const restored = loadAssetWorkspace({ getItem: () => raw })
+  assert.equal(restored.error, '')
+  assert.equal(restored.assets.length, assets.length + 2, 'No synthetic group is persisted')
+  assert.deepEqual(restored.assets.filter((asset) => asset.kind === 'group'), assets.filter((asset) => asset.kind === 'group'))
+  const top = assetTree(restored.assets, '')
+  assert.deepEqual(top.map(({ asset }) => asset.id), ['prod', 'test', 'api', 'root', 'local', 'ssh'])
+  assert.ok(top.every(({ asset }) => asset.parentId === null))
+  assert.ok(top.filter(({ asset }) => asset.kind !== 'group').every(({ children }) => children.length === 0))
+})
+
+test('local connections share grouping, search and persistence without storing unknown fields', () => {
+  const local = { kind: 'local', id: 'local', name: '工作目录', parentId: null, directory: 'C:\\work\\项目 目录' } as const
+  const parsed = parseAssetDocument(document([...assets, { ...local, password: 'secret' }]))
+  assert.ok(parsed)
+  assert.deepEqual(parsed.at(-1), local)
+  const moved = moveAsset(parsed, 'local', 'asia')
+  assert.ok(moved)
+  assert.equal(assetTree(moved, '项目 目录')[0]?.children[0]?.children[0]?.asset.id, 'local')
+  assert.equal(renameAsset(moved, 'local', '新名称')?.at(-1)?.name, '新名称')
+  assert.ok(!deleteAsset(moved, 'prod')?.some((asset) => asset.id === 'local'))
+  let raw = ''
+  saveAssetWorkspace({ setItem: (_key, value) => { raw = value } }, moved, initialAssetView)
+  assert.deepEqual(loadAssetWorkspace({ getItem: () => raw }).assets, moved)
+  assert.ok(!raw.includes('secret'))
+  for (const directory of ['', 'relative/path', 'C:relative', '/bad\npath', '/bad\0path', '/'.repeat(4097)]) {
+    assert.equal(parseAssetDocument(document([{ ...local, directory }])), null)
+  }
+  const large: Asset[] = Array.from({ length: 150 }, (_, i) => ({ ...local, id: `local${i}`, directory: `/${'x'.repeat(4000)}` }))
+  const before = raw
+  assert.throws(() => saveAssets({ setItem: (_key, value) => { raw = value } }, large), /too large/)
+  assert.equal(raw, before, 'An oversized document must not replace readable saved assets')
+})
+
 test('asset document normalizes public fields and strips credentials and unknown properties', () => {
   const result = parseAssetDocument(document([{ ...assets[2], parentId: null, host: 'API.EXAMPLE.TEST', name: ' API ', auth: { password: 'secret' }, privateKey: 'key', passphrase: 'phrase' }]))
   assert.deepEqual(result, [{ kind: 'connection', id: 'api', name: 'API', parentId: null, host: 'api.example.test', port: 22, username: 'deploy' }])

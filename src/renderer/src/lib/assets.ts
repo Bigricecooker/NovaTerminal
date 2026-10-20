@@ -1,12 +1,14 @@
-import { parseSshEndpoint, type SshEndpoint } from '../../../shared/terminal-protocol.ts'
+import { parseLocalDirectory, parseSshEndpoint, type SshEndpoint } from '../../../shared/terminal-protocol.ts'
 
 export const ASSET_STORAGE_KEY = 'novaterminal.assets.v1'
 export const MAX_ASSETS = 500
 export const MAX_GROUP_DEPTH = 8
+const MAX_DOCUMENT_SIZE = 524_288
 export type AssetGroup = { kind: 'group'; id: string; name: string; parentId: string | null }
 export type AssetConnection = { kind: 'connection'; id: string; name: string; parentId: string | null } & SshEndpoint
-export type Asset = AssetGroup | AssetConnection
-export type AssetDraft = Omit<AssetGroup, 'id'> | Omit<AssetConnection, 'id'>
+export type AssetLocalConnection = { kind: 'local'; id: string; name: string; parentId: string | null; directory: string }
+export type Asset = AssetGroup | AssetConnection | AssetLocalConnection
+export type AssetDraft = Omit<AssetGroup, 'id'> | Omit<AssetConnection, 'id'> | Omit<AssetLocalConnection, 'id'>
 export type AssetNode = { asset: Asset; children: AssetNode[] }
 export type AssetView = { expandedIds: string[]; currentGroupId: string | null }
 export const initialAssetView: AssetView = { expandedIds: [], currentGroupId: null }
@@ -34,6 +36,10 @@ export function parseAssetDocument(value: unknown): Asset[] | null {
       const endpoint = parseSshEndpoint(item)
       if (!endpoint) return null
       assets.push({ ...base, kind: 'connection', ...endpoint })
+    } else if (item.kind === 'local') {
+      const directory = parseLocalDirectory(item.directory)
+      if (!directory) return null
+      assets.push({ ...base, kind: 'local', directory })
     } else return null
   }
   const byId = new Map(assets.map((asset) => [asset.id, asset]))
@@ -108,7 +114,7 @@ export function assetTree(assets: Asset[], query: string): AssetNode[] {
     // Stable ordering: folders first, then connections, preserving creation order within each.
     const siblings = (children.get(parentId) ?? []).toSorted((a, b) => Number(b.kind === 'group') - Number(a.kind === 'group'))
     for (const asset of siblings) {
-      const text = asset.kind === 'group' ? asset.name : `${asset.name} ${asset.host} ${asset.username} ${asset.port}`
+      const text = asset.kind === 'group' ? asset.name : asset.kind === 'local' ? `${asset.name} ${asset.directory}` : `${asset.name} ${asset.host} ${asset.username} ${asset.port}`
       const matches = includeAll || text.toLocaleLowerCase().includes(term)
       const nested = asset.kind === 'group' ? visit(asset.id, matches) : []
       if (matches || nested.length > 0) result.push({ asset, children: nested })
@@ -141,7 +147,7 @@ export function loadAssetWorkspace(storage: Pick<Storage, 'getItem'>): { assets:
   try {
     const raw = storage.getItem(ASSET_STORAGE_KEY)
     if (raw === null) return { assets: [], view: normalizeAssetView([], null), error: '' }
-    if (raw.length > 524_288) throw new Error('Too large')
+    if (raw.length > MAX_DOCUMENT_SIZE) throw new Error('Too large')
     const value: unknown = JSON.parse(raw)
     const assets = parseAssetDocument(value)
     if (!assets) throw new Error('Invalid asset document')
@@ -158,5 +164,7 @@ export function saveAssets(storage: Pick<Storage, 'setItem'>, assets: Asset[]): 
 export function saveAssetWorkspace(storage: Pick<Storage, 'setItem'>, assets: Asset[], view: AssetView): void {
   const safe = parseAssetDocument({ version: 1, assets })
   if (!safe) throw new Error('Invalid asset document')
-  storage.setItem(ASSET_STORAGE_KEY, JSON.stringify({ version: 1, assets: safe, sidebar: normalizeAssetView(safe, view) }))
+  const raw = JSON.stringify({ version: 1, assets: safe, sidebar: normalizeAssetView(safe, view) })
+  if (raw.length > MAX_DOCUMENT_SIZE) throw new Error('Asset document too large')
+  storage.setItem(ASSET_STORAGE_KEY, raw)
 }

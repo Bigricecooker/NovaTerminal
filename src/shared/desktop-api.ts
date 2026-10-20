@@ -24,6 +24,9 @@ export type DesktopWindowApi = {
 }
 export const WINDOW_CHANNELS = { action: 'window:action', state: 'window:state', event: 'window:event' } as const
 
+export const DIRECTORY_CHANNEL = 'directory:pick'
+export type DesktopDirectoryApi = { pick: () => Promise<string | null> }
+
 declare global {
-  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi }
+  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi }
 }

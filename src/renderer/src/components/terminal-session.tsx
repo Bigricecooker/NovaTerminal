@@ -96,7 +96,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
           const ssh = takeSshOptions(id)
           if (!ssh) { stop('error', 'SSH 认证信息已释放，请新建连接。'); return }
           send({ type: 'start', cols, rows, ssh })
-        } else send({ type: 'start', cols, rows })
+        } else send({ type: 'start', cols, rows, ...(target.cwd ? { cwd: target.cwd } : {}) })
       } else if (ready && visible) {
         send({ type: 'resize', cols, rows })
       }
@@ -137,7 +137,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
           ready = true
           terminal.options.disableStdin = false
           setHostKey(null)
-          setSession({ phase: 'running', detail: target.kind === 'ssh' ? `SSH · ${target.host}:${target.port}` : '本地会话', shell: message.shell })
+          setSession({ phase: 'running', detail: target.kind === 'ssh' ? `SSH · ${target.host}:${target.port}` : target.cwd ?? '本地会话', shell: message.shell })
           fitTerminal()
           if (activeRef.current) terminal.focus()
           break

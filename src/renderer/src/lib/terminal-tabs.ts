@@ -1,9 +1,9 @@
 import { MAX_SESSIONS, type SshOptions } from '../../../shared/terminal-protocol.ts'
 
-export type TerminalTarget = { kind: 'local' } | ({ kind: 'ssh' } & Pick<SshOptions, 'host' | 'port' | 'username'>)
+export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & Pick<SshOptions, 'host' | 'port' | 'username'>)
 type TerminalTab = { id: string; label: string; target: TerminalTarget }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
-type TabAction = { type: 'open'; ssh?: Pick<SshOptions, 'host' | 'port' | 'username'> }
+type TabAction = { type: 'open'; ssh?: Pick<SshOptions, 'host' | 'port' | 'username'>; local?: { directory: string; name: string } }
   | { type: 'select' | 'close'; id: string }
   | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
 
@@ -15,7 +15,7 @@ export function terminalTabsReducer(state: TerminalTabs, action: TabAction): Ter
       if (state.tabs.length >= MAX_SESSIONS) return state
       const tab: TerminalTab = action.ssh
         ? { id: `ssh-${state.nextId}`, label: `${action.ssh.username}@${action.ssh.host}`, target: { kind: 'ssh', ...action.ssh } }
-        : { id: `local-${state.nextId}`, label: `本地终端 ${state.nextId}`, target: { kind: 'local' } }
+        : { id: `local-${state.nextId}`, label: action.local?.name ?? `本地终端 ${state.nextId}`, target: { kind: 'local', ...(action.local ? { cwd: action.local.directory } : {}) } }
       return { tabs: [...state.tabs, tab], activeId: tab.id, nextId: state.nextId + 1 }
     }
     case 'select':

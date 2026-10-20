@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type DragEvent } from 'react'
-import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TrashIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TerminalIcon, TrashIcon, XIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { AssetCreateDialog } from '@/components/asset-create-dialog'
 import { AssetActionDialog, type AssetAction } from '@/components/asset-action-dialog'
@@ -11,11 +11,13 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Separator } from '@/components/ui/separator'
 import { MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, initialAssetView, loadAssetWorkspace, moveAsset, normalizeAssetView, saveAssetWorkspace, viewAfterAppend, type Asset, type AssetDraft, type AssetNode, type AssetView } from '@/lib/assets'
-import type { SshOptions } from '@shared/terminal-protocol'
+import { parseLocalDirectory, type SshOptions } from '@shared/terminal-protocol'
 
 const ASSET_DRAG = 'application/x-novaterminal-asset'
 
-export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConnect: (options: SshOptions) => boolean }) {
+export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
+  atLimit: boolean; onConnect: (options: SshOptions) => boolean; onOpenLocal: (directory: string, name: string) => boolean
+}) {
   const [initial] = useState(() => {
     try { return loadAssetWorkspace(window.localStorage) }
     catch { return { assets: [], view: initialAssetView, error: '无法访问本机存储，请检查存储权限后刷新页面。' } }
@@ -26,7 +28,9 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
   const [searchCollapsed, setSearchCollapsed] = useState(new Set<string>())
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
-  const [creating, setCreating] = useState<{ kind: Asset['kind']; parentId: string | null } | null>(null)
+  const [creating, setCreating] = useState<{ kind: 'group' | 'connection'; parentId: string | null } | null>(null)
+  const [picking, setPicking] = useState(false)
+  const pickerPending = useRef(false)
   const [action, setAction] = useState<AssetAction | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const dragging = useRef<string | null>(null)
@@ -66,7 +70,23 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
     if (!next) { setError('无法移入该位置：不能移入自身或子分组，分组层级最多 8 层。'); return }
     const failure = persist(next, view)
     if (failure) setError(failure)
-    else setStatus(`已移动到${assets.find((asset) => asset.id === parentId)?.name ?? '根目录'}，保留原有排序。`)
+    else setStatus(`已移动到${assets.find((asset) => asset.id === parentId)?.name ?? '资产列表顶层'}，保留原有排序。`)
+  }
+  const addLocal = async () => {
+    if (pickerPending.current || atLimit || atAssetLimit || initial.error) return
+    pickerPending.current = true; setPicking(true); setError('')
+    try {
+      if (!window.novaDirectories) throw new Error('Desktop directory API unavailable')
+      const selected = await window.novaDirectories.pick()
+      if (selected === null) return
+      const directory = parseLocalDirectory(selected)
+      if (!directory) throw new Error('Invalid directory')
+      const name = (directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory).slice(0, 80)
+      const failure = save({ kind: 'local', name, parentId: null, directory })
+      if (failure) { setError(failure); return }
+      onOpenLocal(directory, name)
+    } catch { setError('无法选择本地目录，请重新尝试。') }
+    finally { pickerPending.current = false; setPicking(false) }
   }
   const dragOver = (event: DragEvent<HTMLElement>, parentId: string | null, key: string) => {
     if (!dragging.current || !event.dataTransfer.types.includes(ASSET_DRAG)) return
@@ -97,7 +117,7 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
     })
   }
   const startAction = (next: AssetAction) => { dialogPending.current = true; setAction(next) }
-  const startCreate = (kind: Asset['kind'], parentId: string | null) => { dialogPending.current = true; setCreating({ kind, parentId }) }
+  const startCreate = (kind: 'group' | 'connection', parentId: string | null) => { dialogPending.current = true; setCreating({ kind, parentId }) }
   const toggle = (asset: Asset) => {
     if (searching) {
       setSearchCollapsed((current) => { const next = new Set(current); if (next.has(asset.id)) next.delete(asset.id); else next.add(asset.id); return next })
@@ -120,7 +140,7 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
           <li key={asset.id} className="min-w-0" data-asset-id={asset.id}>
             <ContextMenu onOpenChange={(opened) => { if (opened) updateView({ ...view, currentGroupId: parentId }) }}>
               <ContextMenuTrigger asChild>
-                <div data-asset-row={asset.id} draggable={!initial.error} tabIndex={asset.kind === 'connection' && atLimit ? 0 : undefined} className={cn('rounded-lg', dropTarget === asset.id && 'ring-2 ring-ring')}
+                <div data-asset-row={asset.id} draggable={!initial.error} tabIndex={asset.kind !== 'group' && atLimit ? 0 : undefined} className={cn('rounded-lg', dropTarget === asset.id && 'ring-2 ring-ring')}
                   onDragOver={(event) => dragOver(event, parentId, asset.id)} onDragLeave={dragLeave} onDrop={(event) => dropAsset(event, parentId)}
                   onDragStart={(event) => { dragging.current = asset.id; event.dataTransfer.setData(ASSET_DRAG, asset.id); event.dataTransfer.effectAllowed = 'move'; setStatus('') }}
                   onDragEnd={() => { dragging.current = null; setDropTarget(null) }}
@@ -139,6 +159,12 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
                         <ServerIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
                       </Button>
                     } />
+                  ) : asset.kind === 'local' ? (
+                    <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit} aria-label={`连接 ${asset.name}`}
+                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `${asset.name} · ${asset.directory}`}
+                      onClick={() => { updateView({ ...view, currentGroupId: asset.parentId }); onOpenLocal(asset.directory, asset.name) }}>
+                      <TerminalIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
+                    </Button>
                   ) : (
                     <Button variant={view.currentGroupId === asset.id ? 'secondary' : 'ghost'} className="w-full justify-start gap-2" aria-expanded={open} aria-controls={childId} title={asset.name} onClick={() => toggle(asset)}>
                       {open ? <ChevronDownIcon data-icon="inline-start" /> : <ChevronRightIcon data-icon="inline-start" />}
@@ -150,7 +176,7 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
               <ContextMenuContent onCloseAutoFocus={(event) => { if (dialogPending.current) event.preventDefault() }} collisionPadding={8}>
                 {asset.kind === 'group' && <>
                   <ContextMenuGroup>
-                    <ContextMenuItem disabled={atAssetLimit} onSelect={() => startCreate('connection', asset.id)}><PlusIcon />添加连接</ContextMenuItem>
+                    <ContextMenuItem disabled={atAssetLimit} onSelect={() => startCreate('connection', null)}><PlusIcon />添加连接</ContextMenuItem>
                     <ContextMenuItem disabled={atAssetLimit || !canAddGroup(asset.id)} onSelect={() => startCreate('group', asset.id)}><FolderPlusIcon />添加子分组</ContextMenuItem>
                   </ContextMenuGroup>
                   <ContextMenuSeparator />
@@ -181,24 +207,31 @@ export function AssetSidebar({ atLimit, onConnect }: { atLimit: boolean; onConne
           {query && <InputGroupAddon align="inline-end"><InputGroupButton size="icon-xs" aria-label="清除搜索" onClick={() => setQuery('')}><XIcon /></InputGroupButton></InputGroupAddon>}
         </InputGroup>
         <div className="flex items-center gap-1" aria-label="资产操作">
-          <Button variant="ghost" size="icon-sm" aria-label="添加连接" title="添加连接" disabled={!!initial.error || atAssetLimit} onClick={() => startCreate('connection', view.currentGroupId)}><PlusIcon /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="添加连接" title="添加连接" disabled={!!initial.error || atAssetLimit} onClick={() => startCreate('connection', null)}><PlusIcon /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="添加本地连接" title={atLimit ? '终端数量已达上限，请先关闭一个标签' : '添加本地连接'} disabled={!!initial.error || atAssetLimit || atLimit || picking} onClick={() => { void addLocal() }}><TerminalIcon /></Button>
           <Button variant="ghost" size="icon-sm" aria-label="添加分组" title="添加分组" disabled={!!initial.error || atAssetLimit || !canAddGroup(view.currentGroupId)} onClick={() => startCreate('group', view.currentGroupId)}><FolderPlusIcon /></Button>
-          <span className="ml-auto truncate text-xs text-muted-foreground" title={assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '根目录'}>{assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '资产'}</span>
+          <span className="ml-auto truncate text-xs text-muted-foreground" title={assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '顶层'}>{assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '顶层'}</span>
         </div>
       </div>
       <Separator />
-      <nav className="min-h-0 flex-1 overflow-y-auto p-2" aria-label="连接和分组">
-        {!initial.error && <div onDragOver={(event) => dragOver(event, null, 'root:')} onDragLeave={dragLeave} onDrop={(event) => dropAsset(event, null)} className={cn('mb-1 rounded-lg', dropTarget === 'root:' && 'ring-2 ring-ring')}>
-          <Button variant="ghost" className="w-full justify-start" aria-label="资产根目录" onClick={() => updateView({ ...view, currentGroupId: null })}><FolderIcon data-icon="inline-start" />根目录</Button>
-        </div>}
+      <nav className={cn('min-h-0 flex-1 overflow-y-auto p-2', dropTarget === 'top-level:' && 'ring-2 ring-inset ring-ring')} aria-label="连接和分组"
+        onClick={(event) => { if (event.target === event.currentTarget) updateView({ ...view, currentGroupId: null }) }}
+        onDragOver={(event) => dragOver(event, null, 'top-level:')} onDragLeave={dragLeave} onDrop={(event) => dropAsset(event, null)}>
         {(initial.error || error) && <Alert variant="destructive"><AlertDescription>{initial.error || error}</AlertDescription></Alert>}
-        {!initial.error && (nodes.length ? renderNodes(nodes) : <Empty className="px-2 py-8" role="status"><EmptyHeader>
-          <EmptyTitle>{searching ? '未找到匹配项' : '暂无连接和分组'}</EmptyTitle>
-          <EmptyDescription>{searching ? '尝试其他名称、主机或用户名。' : '使用上方按钮添加连接或分组。'}</EmptyDescription>
-        </EmptyHeader></Empty>)}
+        {!initial.error && <>
+          {renderNodes(nodes)}
+          {!searching && !nodes.length && <Empty className="px-2 py-8" role="status"><EmptyHeader>
+            <EmptyTitle>暂无资产</EmptyTitle>
+            <EmptyDescription>添加连接、本地连接或分组。</EmptyDescription>
+          </EmptyHeader></Empty>}
+          {searching && !nodes.length && <Empty className="px-2 py-8" role="status"><EmptyHeader>
+            <EmptyTitle>未找到匹配项</EmptyTitle>
+            <EmptyDescription>尝试其他名称、目录、主机或用户名。</EmptyDescription>
+          </EmptyHeader></Empty>}
+        </>}
       </nav>
       <p role="status" className="sr-only">{status}</p>
-      {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} onSave={save} onClose={closeDialog} />}
+      {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} atLimit={atLimit} onConnect={onConnect} onSave={save} onClose={closeDialog} />}
       {action && <AssetActionDialog action={action} assets={assets} onSave={(next) => persist(next, view)} onClose={closeDialog} />}
     </aside>
   )

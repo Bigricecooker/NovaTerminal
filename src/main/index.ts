@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, Menu, net, protocol, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL } from '../shared/desktop-api.ts'
+import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 
@@ -11,6 +12,7 @@ const dev = !app.isPackaged && process.env.NOVA_DEV_SERVER === DEV_URL
 const rendererUrl = dev ? DEV_URL : APP_URL
 let window: BrowserWindow | null = null
 let quitting = false
+let pickingDirectory = false
 const sessions = createDesktopSessions(
   () => utilityProcess.fork(join(__dirname, 'session-worker.cjs'), [], { stdio: 'ignore', serviceName: 'NovaTerminal Session' }),
   (owner, event) => {
@@ -74,6 +76,18 @@ void app.whenReady().then(async () => {
   ipcMain.handle(DESKTOP_CHANNELS.open, (event) => sessions.open(authorize(event)))
   ipcMain.handle(DESKTOP_CHANNELS.send, (event, id: unknown, message: unknown) => sessions.send(authorize(event), id, message))
   ipcMain.handle(DESKTOP_CHANNELS.close, (event, id: unknown) => sessions.close(authorize(event), id))
+  ipcMain.handle(DIRECTORY_CHANNEL, async (event) => {
+    authorize(event)
+    const owner = window
+    if (!owner || pickingDirectory) return null
+    pickingDirectory = true
+    try {
+      const result = await dialog.showOpenDialog(owner, { title: '添加本地连接', properties: ['openDirectory'] })
+      if (result.canceled || owner.isDestroyed() || window !== owner) return null
+      authorize(event)
+      return parseLocalDirectory(result.filePaths[0])
+    } finally { pickingDirectory = false }
+  })
   ipcMain.handle(WINDOW_CHANNELS.state, (event) => {
     authorize(event)
     return { maximized: window?.isMaximized() ?? false }

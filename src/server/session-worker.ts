@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
+import { statSync } from 'node:fs'
 import { spawn, type IPty, type IDisposable } from 'node-pty'
 import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, parseClientMessage, type ServerMessage } from '../shared/terminal-protocol.ts'
 
@@ -70,12 +71,16 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
             return
           }
           const windows = process.platform === 'win32'
+          const cwd = message.cwd ?? homedir()
+          try {
+            if (!isAbsolute(cwd) || !statSync(cwd).isDirectory()) throw new Error('Invalid directory')
+          } catch { fail('无法打开本地目录，请确认目录存在且有访问权限。'); return }
           const shell = windows
             ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
             : process.env.SHELL || '/bin/sh'
           const terminal = spawn(shell, windows ? ['-NoLogo', '-NoProfile'] : ['-l'], {
             name: 'xterm-256color', cols: message.cols, rows: message.rows,
-            cwd: homedir(), env: { ...process.env, TERM: 'xterm-256color' },
+            cwd, env: { ...process.env, TERM: 'xterm-256color' },
             useConptyDll: windows,
           })
           pty = terminal
