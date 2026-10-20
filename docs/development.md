@@ -48,7 +48,7 @@ npm run test:package
 | `src/renderer/src/components/terminal-session.tsx` | xterm、会话状态、尺寸与输出确认 |
 | `src/renderer/src/lib/terminal-transport.ts` | preload 会话传输、待发送量与订阅清理 |
 | `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
-| `src/renderer/src/components/asset-*.tsx` | 资产侧栏和创建表单 |
+| `src/renderer/src/components/asset-*.tsx` | 资产树、创建、重命名 / 移动 / 删除对话框与右键菜单 |
 | `src/renderer/src/components/ssh-connection-dialog.tsx` | SSH 参数与认证表单 |
 | `src/renderer/src/components/ui/` | 由官方 CLI 引入的 shadcn/ui 组件 |
 | `src/shared/terminal-protocol.ts` | 共享消息类型、参数校验和资源限额 |
@@ -74,6 +74,10 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
 
 ## UI 维护
 
+资产侧栏将资产与展开 / 当前层级状态作为同一工作区文档保存到 `novaterminal.assets.v1`。旧版文档兼容读取，默认不展开；新状态只保留有效分组 ID。所有资产变更和持久展开状态先保存再更新 React 状态，失败时保留原文档与界面。搜索使用独立的临时展开状态，清除搜索不会展开其他分组。
+
+资产排序保持分组优先、同类创建顺序；移动只改 `parentId`，不改变源数组顺序。模型统一校验重命名、子树移动和删除，移动必须验证后代深度与循环。原生 HTML 拖放仅传递条目 ID，并核对页面内拖拽来源；右键菜单的“移动到”提供键盘替代。
+
 在 `components.json` 中维护组件路径与基础配置，使用官方 shadcn CLI 添加实际需要的组件，保留上游许可。项目采用 Radix 基础组件；新增迁移方案需要独立技术决策。
 
 主题及终端颜色统一维护在 `src/renderer/src/index.css`。`src/renderer/src/lib/utils.ts` 是组件工具别名的兼容入口，虽未被当前业务代码直接导入，仍由 CLI 配置引用，不按无引用业务文件清理。
@@ -91,7 +95,7 @@ npm run test:desktop
 
 | 测试文件 | 主要覆盖 |
 | --- | --- |
-| `tests/assets.test.ts` | 资产字段、数量、层级、引用、搜索与存储边界 |
+| `tests/assets.test.ts` | 资产字段、数量、层级、引用、搜索、重命名、移动 / 删除子树、展开规则与存储边界 |
 | `tests/terminal-tabs.test.ts` | 标签增删、选择、上限与会话标识 |
 | `tests/terminal-session.test.ts` | 桌面会话管理下的协议拒绝、真实本地 Shell、尺寸、背压与关闭隔离 |
 | `tests/desktop-dev.test.ts` | Vite 页面与前端入口、回环监听配置及禁止页面嵌入 |

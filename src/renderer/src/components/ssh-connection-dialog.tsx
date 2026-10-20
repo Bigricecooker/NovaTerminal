@@ -43,7 +43,13 @@ export function SshConnectionDialog({ disabled, onConnect, endpoint, trigger }: 
           <ServerIcon />
         </Button>}
       </DialogTrigger>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"
+        // Portal events must not activate the asset row's drag or context menu handlers.
+        onContextMenu={(event) => event.stopPropagation()}
+        onDragStart={(event) => event.stopPropagation()}
+        onDragOver={(event) => event.stopPropagation()}
+        onDrop={(event) => event.stopPropagation()}
+        onKeyDown={(event) => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') event.stopPropagation() }}>
         <DialogHeader>
           <DialogTitle>连接 SSH 服务器</DialogTitle>
           <DialogDescription>新建独立远端终端。首次连接需核对主机指纹，密码和私钥不会保存。</DialogDescription>

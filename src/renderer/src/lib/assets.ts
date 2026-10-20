@@ -8,6 +8,8 @@ export type AssetConnection = { kind: 'connection'; id: string; name: string; pa
 export type Asset = AssetGroup | AssetConnection
 export type AssetDraft = Omit<AssetGroup, 'id'> | Omit<AssetConnection, 'id'>
 export type AssetNode = { asset: Asset; children: AssetNode[] }
+export type AssetView = { expandedIds: string[]; currentGroupId: string | null }
+export const initialAssetView: AssetView = { expandedIds: [], currentGroupId: null }
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -54,6 +56,49 @@ export function appendAsset(assets: Asset[], draft: AssetDraft, id: string): Ass
   return parseAssetDocument({ version: 1, assets: [...assets, { ...draft, id }] })
 }
 
+export function renameAsset(assets: Asset[], id: string, name: string): Asset[] | null {
+  if (!assets.some((asset) => asset.id === id)) return null
+  return parseAssetDocument({ version: 1, assets: assets.map((asset) => asset.id === id ? { ...asset, name } : asset) })
+}
+
+export function moveAsset(assets: Asset[], id: string, parentId: string | null): Asset[] | null {
+  if (!assets.some((asset) => asset.id === id)) return null
+  // Validate the entire subtree at its new depth; array order remains creation order.
+  return parseAssetDocument({ version: 1, assets: assets.map((asset) => asset.id === id ? { ...asset, parentId } : asset) })
+}
+
+export function assetSubtreeIds(assets: Asset[], id: string): Set<string> {
+  const ids = new Set<string>()
+  const visit = (parent: string) => {
+    if (ids.has(parent)) return
+    ids.add(parent)
+    for (const asset of assets) if (asset.parentId === parent) visit(asset.id)
+  }
+  if (assets.some((asset) => asset.id === id)) visit(id)
+  return ids
+}
+
+export function deleteAsset(assets: Asset[], id: string): Asset[] | null {
+  const ids = assetSubtreeIds(assets, id)
+  return ids.size ? assets.filter((asset) => !ids.has(asset.id)) : null
+}
+
+export function normalizeAssetView(assets: Asset[], value: unknown): AssetView {
+  const groups = new Set(assets.filter((asset) => asset.kind === 'group').map((asset) => asset.id))
+  if (!record(value)) return { ...initialAssetView, expandedIds: [] }
+  const expandedIds = Array.isArray(value.expandedIds) && value.expandedIds.length <= MAX_ASSETS
+    ? [...new Set(value.expandedIds.filter((id): id is string => typeof id === 'string' && groups.has(id)))] : []
+  return { expandedIds, currentGroupId: typeof value.currentGroupId === 'string' && groups.has(value.currentGroupId) ? value.currentGroupId : null }
+}
+
+export function viewAfterAppend(view: AssetView, draft: AssetDraft, id: string): AssetView {
+  if (draft.parentId !== view.currentGroupId) return view
+  const expandedIds = new Set(view.expandedIds)
+  if (draft.parentId !== null) expandedIds.add(draft.parentId)
+  if (draft.kind === 'group') expandedIds.add(id)
+  return { ...view, expandedIds: [...expandedIds] }
+}
+
 export function assetTree(assets: Asset[], query: string): AssetNode[] {
   const term = query.trim().toLocaleLowerCase()
   const children = new Map<string | null, Asset[]>()
@@ -88,21 +133,30 @@ export function groupOptions(assets: Asset[]): { id: string; label: string; dept
 }
 
 export function loadAssets(storage: Pick<Storage, 'getItem'>): { assets: Asset[]; error: string } {
+  const { assets, error } = loadAssetWorkspace(storage)
+  return { assets, error }
+}
+
+export function loadAssetWorkspace(storage: Pick<Storage, 'getItem'>): { assets: Asset[]; view: AssetView; error: string } {
   try {
     const raw = storage.getItem(ASSET_STORAGE_KEY)
-    if (raw === null) return { assets: [], error: '' }
+    if (raw === null) return { assets: [], view: normalizeAssetView([], null), error: '' }
     if (raw.length > 524_288) throw new Error('Too large')
     const value: unknown = JSON.parse(raw)
     const assets = parseAssetDocument(value)
     if (!assets) throw new Error('Invalid asset document')
-    return { assets, error: '' }
+    return { assets, view: normalizeAssetView(assets, record(value) ? value.sidebar : null), error: '' }
   } catch {
-    return { assets: [], error: '无法读取本机资产配置。为避免覆盖已有数据，已暂停新增；请检查浏览器存储权限或资产数据。' }
+    return { assets: [], view: normalizeAssetView([], null), error: '无法读取本机资产配置。为避免覆盖已有数据，已暂停修改；请检查本机存储权限或资产数据。' }
   }
 }
 
 export function saveAssets(storage: Pick<Storage, 'setItem'>, assets: Asset[]): void {
+  saveAssetWorkspace(storage, assets, initialAssetView)
+}
+
+export function saveAssetWorkspace(storage: Pick<Storage, 'setItem'>, assets: Asset[], view: AssetView): void {
   const safe = parseAssetDocument({ version: 1, assets })
   if (!safe) throw new Error('Invalid asset document')
-  storage.setItem(ASSET_STORAGE_KEY, JSON.stringify({ version: 1, assets: safe }))
+  storage.setItem(ASSET_STORAGE_KEY, JSON.stringify({ version: 1, assets: safe, sidebar: normalizeAssetView(safe, view) }))
 }

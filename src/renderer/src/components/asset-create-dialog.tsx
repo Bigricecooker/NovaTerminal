@@ -1,18 +1,17 @@
 import { useId, useState, type FormEvent } from 'react'
-import { FolderPlusIcon, PlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { MAX_GROUP_DEPTH, groupOptions, type Asset, type AssetDraft } from '@/lib/assets'
 import { parseSshEndpoint } from '@shared/terminal-protocol'
 
-export function AssetCreateDialog({ kind, assets, disabled, onSave }: {
+export function AssetCreateDialog({ kind, assets, disabled, onSave, parentId, onClose }: {
   kind: Asset['kind']; assets: Asset[]; disabled: boolean
   onSave: (draft: AssetDraft) => string | null
+  parentId: string | null; onClose: () => void
 }) {
-  const [open, setOpen] = useState(false)
   const [error, setError] = useState('')
   const id = useId()
   const title = kind === 'group' ? '添加分组' : '添加连接'
@@ -36,16 +35,11 @@ export function AssetCreateDialog({ kind, assets, disabled, onSave }: {
     const failure = onSave(draft)
     if (failure) { setError(failure); return }
     form.reset()
-    setOpen(false)
+    onClose()
   }
 
   return (
-    <Dialog open={open} onOpenChange={(value) => { setOpen(value); setError('') }}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon-sm" title={title} aria-label={title} disabled={disabled}>
-          {kind === 'group' ? <FolderPlusIcon /> : <PlusIcon />}
-        </Button>
-      </DialogTrigger>
+    <Dialog open onOpenChange={(value) => { if (!value) onClose() }}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -59,7 +53,7 @@ export function AssetCreateDialog({ kind, assets, disabled, onSave }: {
             </Field>
             <Field>
               <FieldLabel htmlFor={`${id}-parent`}>所属分组</FieldLabel>
-              <NativeSelect id={`${id}-parent`} name="parentId" defaultValue="">
+              <NativeSelect id={`${id}-parent`} name="parentId" defaultValue={parentId ?? ''}>
                 <NativeSelectOption value="">根目录</NativeSelectOption>
                 {groups.map((group) => <NativeSelectOption key={group.id} value={group.id}>{group.label}</NativeSelectOption>)}
               </NativeSelect>

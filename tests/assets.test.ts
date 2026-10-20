@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, loadAssets, parseAssetDocument, saveAssets, type Asset } from '../src/renderer/src/lib/assets.ts'
+import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetSubtreeIds, assetTree, deleteAsset, groupOptions, initialAssetView, loadAssets, loadAssetWorkspace, moveAsset, normalizeAssetView, parseAssetDocument, renameAsset, saveAssets, saveAssetWorkspace, viewAfterAppend, type Asset } from '../src/renderer/src/lib/assets.ts'
 
 const assets: Asset[] = [
   { kind: 'group', id: 'prod', name: '生产环境', parentId: null },
@@ -90,4 +90,73 @@ test('storage round-trip persists only validated public configuration and report
   }
   assert.ok(loadAssets({ getItem: () => { throw new Error('Denied') } }).error)
   assert.throws(() => saveAssets({ setItem: () => { throw new Error('Quota') } }, assets), /Quota/)
+})
+
+test('renaming preserves identity, endpoint, hierarchy and creation order with validated names', () => {
+  const renamed = renameAsset(assets, 'api', '  API 服务  ')
+  assert.ok(renamed)
+  assert.deepEqual(renamed.map((asset) => asset.id), assets.map((asset) => asset.id))
+  assert.deepEqual(renamed.find((asset) => asset.id === 'api'), { ...assets[2], name: 'API 服务' })
+  for (const name of [' ', 'x'.repeat(81), 'bad\nname']) assert.equal(renameAsset(assets, 'api', name), null)
+  assert.equal(renameAsset(assets, 'missing', '名称'), null)
+  assert.equal(assets[2]?.name, 'API')
+})
+
+test('moving assets changes only parentage and retains folders-first creation order', () => {
+  const moved = moveAsset(assets, 'api', null)
+  assert.ok(moved)
+  assert.deepEqual(moved.map((asset) => asset.id), assets.map((asset) => asset.id))
+  assert.deepEqual(assetTree(moved, '').map((node) => node.asset.id), ['prod', 'test', 'api', 'root'])
+  assert.equal(assets[2]?.parentId, 'asia')
+  for (const [id, parent] of [['prod', 'asia'], ['prod', 'prod'], ['asia', 'api'], ['api', 'missing'], ['missing', null]] as const) {
+    assert.equal(moveAsset(assets, id, parent), null)
+  }
+})
+
+test('moving a group validates its complete subtree depth while permitting deepest connections', () => {
+  const groups: Asset[] = Array.from({ length: MAX_GROUP_DEPTH }, (_, i) => ({ kind: 'group', id: `g${i}`, name: '分组', parentId: i ? `g${i - 1}` : null }))
+  const branch: Asset[] = [...groups, { kind: 'group', id: 'branch', name: '分支', parentId: null }, { kind: 'group', id: 'child', name: '子分组', parentId: 'branch' }, { kind: 'connection', id: 'c', name: '连接', parentId: null, host: 'host.test', port: 22, username: 'user' }]
+  assert.equal(moveAsset(branch, 'branch', 'g6'), null)
+  assert.ok(moveAsset(branch, 'branch', 'g5'))
+  assert.ok(moveAsset(branch, 'c', 'g7'))
+})
+
+test('deleting a subtree removes its descendants and only their sidebar state', () => {
+  assert.deepEqual([...assetSubtreeIds(assets, 'prod')].sort(), ['api', 'asia', 'db', 'prod'])
+  const remaining = deleteAsset(assets, 'prod')
+  assert.ok(remaining)
+  assert.deepEqual(remaining.map((asset) => asset.id), ['test', 'root'])
+  assert.deepEqual(normalizeAssetView(remaining, { expandedIds: ['prod', 'asia', 'test'], currentGroupId: 'asia' }), { expandedIds: ['test'], currentGroupId: null })
+  assert.deepEqual(deleteAsset(assets, 'api')?.map((asset) => asset.id), ['prod', 'asia', 'db', 'test', 'root'])
+  assert.equal(deleteAsset(assets, 'missing'), null)
+  assert.equal(assets.length, 6)
+})
+
+test('new assets expand only their current branch and never reset unrelated folded groups', () => {
+  const view = { expandedIds: ['prod'], currentGroupId: 'asia' }
+  const draft = { kind: 'group', name: '新分组', parentId: 'asia' } as const
+  assert.deepEqual(viewAfterAppend(view, draft, 'new'), { expandedIds: ['prod', 'asia', 'new'], currentGroupId: 'asia' })
+  assert.equal(viewAfterAppend(view, { ...draft, parentId: 'test' }, 'new'), view)
+  assert.deepEqual(view.expandedIds, ['prod'])
+  assert.deepEqual(viewAfterAppend(initialAssetView, { ...draft, parentId: null }, 'new').expandedIds, ['new'])
+  assert.deepEqual(viewAfterAppend(view, { kind: 'connection', name: '新连接', parentId: 'asia', host: 'host.test', port: 22, username: 'user' }, 'c').expandedIds, ['prod', 'asia'])
+})
+
+test('legacy assets start collapsed; workspace saves hierarchy and filtered view together without secrets', () => {
+  let raw = JSON.stringify(document(assets))
+  const storage = { getItem: () => raw, setItem: (_key: string, value: string) => { raw = value } }
+  assert.deepEqual(loadAssetWorkspace(storage).view, initialAssetView)
+  const moved = moveAsset(assets, 'api', 'test')
+  assert.ok(moved)
+  saveAssetWorkspace(storage, moved, { expandedIds: ['prod', 'prod', 'api', 'missing', 'test'], currentGroupId: 'test' })
+  assert.deepEqual(loadAssetWorkspace(storage), { assets: moved, view: { expandedIds: ['prod', 'test'], currentGroupId: 'test' }, error: '' })
+  const saved = raw
+  assert.throws(() => saveAssetWorkspace({ setItem: () => { throw new Error('Quota') } }, assets, initialAssetView), /Quota/)
+  assert.equal(raw, saved)
+  raw = JSON.stringify({ ...document(assets), sidebar: { expandedIds: ['prod'], currentGroupId: 'api', password: 'secret' } })
+  assert.deepEqual(loadAssetWorkspace(storage).view, { expandedIds: ['prod'], currentGroupId: null })
+  saveAssetWorkspace(storage, assets, loadAssetWorkspace(storage).view)
+  assert.ok(!raw.includes('secret'))
+  raw = JSON.stringify({ ...document(assets), sidebar: { expandedIds: Array(501).fill('prod') } })
+  assert.deepEqual(loadAssetWorkspace(storage).view, initialAssetView)
 })
