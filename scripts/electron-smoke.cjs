@@ -15,17 +15,24 @@ const closeTestServer = async () => {
 }
 const deadline = setTimeout(() => { console.error('Desktop smoke test timed out'); app.exit(1) }, 60_000)
 app.on('browser-window-created', (_event, window) => {
-  const overlays = []
-  if (process.platform !== 'darwin') {
-    const setOverlay = window.setTitleBarOverlay.bind(window)
-    window.setTitleBarOverlay = (appearance) => { overlays.push(appearance); setOverlay(appearance) }
-  }
   window.webContents.once('did-finish-load', async () => {
     try {
       const evaluate = (source) => window.webContents.executeJavaScript(source)
+      const clickWindowButton = async (label) => {
+        window.focus()
+        await delay(100)
+        const point = await evaluate(`(() => {
+          const button = Array.from(document.querySelectorAll('header button')).find(button => button.getAttribute('aria-label') === ${JSON.stringify(label)});
+          if (!button) throw new Error('Window button missing');
+          const rect = button.getBoundingClientRect();
+          return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        })()`)
+        window.webContents.sendInputEvent({ type: 'mouseDown', ...point, button: 'left', clickCount: 1 })
+        window.webContents.sendInputEvent({ type: 'mouseUp', ...point, button: 'left', clickCount: 1 })
+      }
       const wait = async (source) => {
         const until = Date.now() + 15_000
-        while (!(await evaluate(source))) { assert.ok(Date.now() < until, `Timed out: ${source}`); await delay(30) }
+        while (!(await evaluate(source))) { if (Date.now() >= until) throw new Error(`Timed out: ${source}`); await delay(30) }
       }
       const preferences = window.webContents.getLastWebPreferences()
       assert.equal(preferences.nodeIntegration, false)
@@ -37,23 +44,33 @@ app.on('browser-window-created', (_event, window) => {
       await wait('Boolean(document.querySelector(\'button[aria-label="新建本地终端"]\'))')
       assert.equal(await evaluate('typeof require'), 'undefined')
       assert.equal(await evaluate('typeof window.novaTerminal.send'), 'function')
-      assert.equal(await evaluate('typeof window.novaWindow.setAppearance'), 'function')
-      await wait('navigator.windowControlsOverlay?.visible === true')
+      assert.equal(await evaluate('typeof window.novaWindow.minimize'), 'function')
+      assert.equal(await evaluate('Boolean(navigator.windowControlsOverlay?.visible)'), false)
       assert.equal(await evaluate('document.querySelector("header").getBoundingClientRect().height'), 48)
       assert.equal(await evaluate('getComputedStyle(document.querySelector("header")).getPropertyValue("-webkit-app-region")'), 'drag')
       assert.equal(await evaluate('getComputedStyle(document.querySelector(".app-titlebar-actions")).getPropertyValue("-webkit-app-region")'), 'no-drag')
-      assert.ok(await evaluate('document.querySelector(".app-titlebar-actions").getBoundingClientRect().right <= navigator.windowControlsOverlay.getTitlebarAreaRect().right'))
-      assert.equal(await evaluate('window.novaWindow.setAppearance({background:"#fff",foreground:"#000000"}).then(() => false, () => true)'), true)
+      assert.equal(await evaluate('document.querySelectorAll(\'header [aria-label="窗口控制"] button\').length'), 3)
+      assert.ok(await evaluate('document.querySelector(\'header [aria-label="窗口控制"]\').getBoundingClientRect().right <= innerWidth'))
       await fs.mkdir(path.join(__dirname, '../test-results'), { recursive: true })
       await fs.writeFile(path.join(__dirname, '../test-results/titlebar-light.png'), (await window.webContents.capturePage()).toPNG())
-      window.minimize()
-      await delay(100)
+      await clickWindowButton('最小化窗口')
+      const minimizeDeadline = Date.now() + 5_000
+      while (!window.isMinimized()) { if (Date.now() >= minimizeDeadline) throw new Error('Minimize button must minimize the window'); await delay(30) }
       assert.equal(window.isMinimized(), true)
       window.restore()
-      window.maximize()
-      await delay(100)
+      window.show()
+      await delay(150)
+      await clickWindowButton('最大化窗口')
+      await wait('Boolean(document.querySelector(\'button[aria-label="还原窗口"]\'))')
       assert.equal(window.isMaximized(), true)
+      await clickWindowButton('还原窗口')
+      await wait('Boolean(document.querySelector(\'button[aria-label="最大化窗口"]\'))')
+      assert.equal(window.isMaximized(), false)
+      // Native state changes (including title-bar double click) must update the UI too.
+      window.maximize()
+      await wait('Boolean(document.querySelector(\'button[aria-label="还原窗口"]\'))')
       window.unmaximize()
+      await wait('Boolean(document.querySelector(\'button[aria-label="最大化窗口"]\'))')
       window.show()
       await delay(150)
       await evaluate(`window.__smoke = { events: [], output: '' }; window.novaTerminal.onEvent(event => { window.__smoke.events.push(event); if (event.message?.type === 'output') window.__smoke.output += event.message.data }); document.querySelector('button[aria-label="新建本地终端"]').click()`)
@@ -74,11 +91,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait('document.querySelectorAll(\'[role="tab"]\').length === 1')
       await evaluate(`document.querySelector('button[aria-label="切换深色主题"]').click()`)
       await wait('document.documentElement.classList.contains("dark")')
-      const themeDeadline = Date.now() + 5_000
-      while (window.getBackgroundColor().toLowerCase() !== '#0a0a0a') { assert.ok(Date.now() < themeDeadline, 'Native title bar must follow dark theme'); await delay(30) }
-      if (process.platform !== 'darwin') {
-        assert.deepEqual(overlays.at(-1), { color: '#0a0a0a', symbolColor: '#fafafa' })
-      }
+      await wait('getComputedStyle(document.querySelector(\'button[aria-label="关闭窗口"]\')).color === getComputedStyle(document.querySelector("header")).color')
       await delay(200)
       await fs.writeFile(path.join(__dirname, '../test-results/titlebar-dark.png'), (await window.webContents.capturePage()).toPNG())
       window.setSize(1000, 700)
@@ -127,9 +140,11 @@ app.on('browser-window-created', (_event, window) => {
       await wait(`document.querySelector('[role="tabpanel"][data-state="active"] .xterm-rows')?.textContent.includes('🚀中文_NOVA_PASTE_OK')`)
       await fs.writeFile(path.join(__dirname, '../test-results/electron-review-unicode.png'), (await window.webContents.capturePage()).toPNG())
       await closeTestServer()
-      console.log('Desktop smoke passed: visible title bar, native window states, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication and Unicode paste.')
+      console.log('Desktop smoke passed: unified title bar, window button input, state sync, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication and Unicode paste.')
+      const closed = once(window, 'closed')
+      await clickWindowButton('关闭窗口')
+      await closed
       if (process.platform === 'darwin') app.quit()
-      else window.close()
     } catch (error) { console.error(error); process.exitCode = 1; await closeTestServer(); app.quit() }
   })
 })

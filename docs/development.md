@@ -37,13 +37,14 @@ npm run test:package
 
 浏览器 PTY worker 相对于 `src/server/terminal-plugin.ts` 定位，不依赖 Vite 页面根目录或配置文件位置。桌面入口通过 esbuild 输出到 `out/electron/`，前端构建输出到仓库根目录 `dist/`。
 
-桌面使用 `titleBarStyle: hidden` 与原生 Window Controls Overlay，将窗口按钮融入 48px 应用页头。内容通过 `titlebar-area-x` / `titlebar-area-width` CSS 环境变量避让原生按钮，页头为拖动区，操作按钮组为 `no-drag`。浏览器模式保持普通页头；窗口颜色由界面主题 tokens 转为 RGB，经独立、有限且校验来源与参数的 `novaWindow.setAppearance` 同步。
+桌面使用无系统边框窗口，最小化、最大化 / 还原、关闭按钮由 `window-controls.tsx` 绘制，与应用操作处于同一 48px React 页头，共用主题 tokens。页头为拖动区，操作按钮组为 `no-drag`。受限 `novaWindow` 仅提供三个固定窗口操作和最大化状态读取 / 订阅；主进程继续校验来源、主框架和动作白名单，原生状态变化同步回界面。窗口按钮无需独立颜色同步或原生叠加层安全区域。
 
-页头下方的水平 Separator 独立于 48px 原生叠加区域，保证窗口按钮下方的线条连续；操作组使用竖直 Separator。终端不设独立清屏工具栏，Shell、连接状态和错误提示保留在底部状态栏。
+页头下方使用全宽水平 Separator；应用操作与窗口操作之间使用竖直 Separator。终端不设独立清屏工具栏，Shell、连接状态和错误提示保留在底部状态栏。
 
 | 位置 | 职责 |
 | --- | --- |
 | `src/renderer/src/App.tsx` | 页面布局、主题和工作区加载 |
+| `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
 | `src/renderer/src/components/terminal-workspace.tsx` | 标签状态、终端入口和临时凭据交接 |
 | `src/renderer/src/components/terminal-session.tsx` | xterm、会话状态、尺寸与输出确认 |
 | `src/renderer/src/lib/terminal-transport.ts` | 桌面 preload 与浏览器 WebSocket 传输适配 |
@@ -105,11 +106,11 @@ npm run test:desktop
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK 和隔离清理 |
 
-`test:desktop` 启动真实 Electron，检查窗口可见性、顶栏安全区域 / 拖动区域样式、最小化 / 最大化 / 关闭、原生主题颜色同步、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴及退出清理。窗口状态通过 Electron API 验证，系统按钮的真实鼠标点击和拖动仍需人工检查。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
+`test:desktop` 启动真实 Electron，检查窗口可见性、统一顶栏 / 拖动区域样式、鼠标输入触发最小化 / 最大化 / 还原 / 关闭、外部窗口状态变化同步、深浅主题、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴及退出清理。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 
-当前没有持续集成或独立浏览器自动化套件。自动化测试不能替代布局、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux、真实远端 SSH 与浏览器指纹确认流程需单独验收。冒烟截图保存在忽略提交的 `test-results/` 中。
+当前没有持续集成或独立浏览器自动化套件。自动化测试不能替代布局、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux、真实远端 SSH 与浏览器指纹确认流程需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
 
 ## 浏览器交互测试
 

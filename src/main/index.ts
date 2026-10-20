@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, Menu, net, protocol, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_APPEARANCE_CHANNEL } from '../shared/desktop-api.ts'
-import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAppearance } from './security.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS } from '../shared/desktop-api.ts'
+import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
@@ -31,11 +31,15 @@ function authorize(event: Electron.IpcMainInvokeEvent): number {
 async function createWindow() {
   const current = new BrowserWindow({
     title: 'NovaTerminal', width: 1200, height: 800, minWidth: 720, minHeight: 480, show: false,
-    backgroundColor: '#ffffff', titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? { height: 48 } : { height: 48, color: '#ffffff', symbolColor: '#0a0a0a' },
+    backgroundColor: '#ffffff', frame: false,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
   })
   window = current
+  const publishState = () => {
+    if (!current.webContents.isDestroyed()) current.webContents.send(WINDOW_CHANNELS.event, { maximized: current.isMaximized() })
+  }
+  current.on('maximize', publishState)
+  current.on('unmaximize', publishState)
   current.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   current.webContents.session.setPermissionCheckHandler(() => false)
   current.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -65,13 +69,20 @@ void app.whenReady().then(async () => {
   ipcMain.handle(DESKTOP_CHANNELS.open, (event) => sessions.open(authorize(event)))
   ipcMain.handle(DESKTOP_CHANNELS.send, (event, id: unknown, message: unknown) => sessions.send(authorize(event), id, message))
   ipcMain.handle(DESKTOP_CHANNELS.close, (event, id: unknown) => sessions.close(authorize(event), id))
-  ipcMain.handle(WINDOW_APPEARANCE_CHANNEL, (event, raw: unknown) => {
+  ipcMain.handle(WINDOW_CHANNELS.state, (event) => {
     authorize(event)
-    const appearance = windowAppearance(raw)
-    if (!appearance) throw new Error('Invalid window appearance')
+    return { maximized: window?.isMaximized() ?? false }
+  })
+  ipcMain.handle(WINDOW_CHANNELS.action, (event, raw: unknown) => {
+    authorize(event)
+    const action = windowAction(raw)
+    if (!action) throw new Error('Invalid window action')
     if (window && !window.isDestroyed()) {
-      window.setBackgroundColor(appearance.background)
-      if (process.platform !== 'darwin') window.setTitleBarOverlay({ color: appearance.background, symbolColor: appearance.foreground })
+      if (action === 'minimize') window.minimize()
+      else if (action === 'toggle-maximize') {
+        if (window.isMaximized()) window.unmaximize()
+        else window.maximize()
+      } else window.close()
     }
   })
   await createWindow()

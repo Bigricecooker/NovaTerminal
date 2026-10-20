@@ -7,17 +7,8 @@
 
 .app-titlebar {
     height: 48px;
-}
-
-.app-titlebar[data-desktop] {
     -webkit-app-region: drag;
     user-select: none;
-}
-
-.app-titlebar-content {
-    height: 100%;
-    margin-left: env(titlebar-area-x, 0px);
-    width: env(titlebar-area-width, 100%);
 }
 
 .app-titlebar-actions {

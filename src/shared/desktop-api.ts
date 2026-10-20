@@ -13,9 +13,16 @@ export const DESKTOP_CHANNELS = {
   open: 'terminal:open', send: 'terminal:send', close: 'terminal:close', event: 'terminal:event',
 } as const
 
-export type WindowAppearance = { background: string; foreground: string }
-export type DesktopWindowApi = { setAppearance: (appearance: WindowAppearance) => Promise<void> }
-export const WINDOW_APPEARANCE_CHANNEL = 'window:appearance'
+export type WindowAction = 'minimize' | 'toggle-maximize' | 'close'
+export type WindowState = { maximized: boolean }
+export type DesktopWindowApi = {
+  minimize: () => Promise<void>
+  toggleMaximize: () => Promise<void>
+  close: () => Promise<void>
+  getState: () => Promise<WindowState>
+  onState: (listener: (state: WindowState) => void) => () => void
+}
+export const WINDOW_CHANNELS = { action: 'window:action', state: 'window:state', event: 'window:event' } as const
 
 declare global {
   interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi }
