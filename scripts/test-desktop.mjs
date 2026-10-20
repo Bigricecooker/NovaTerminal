@@ -9,6 +9,7 @@ const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.NOVA_DEV_SERVER
 const dev = process.argv.includes('--dev')
+const sidebar = process.argv.includes('--sidebar')
 let server
 if (dev) {
   server = await createServer({ logLevel: 'error' })
@@ -19,8 +20,9 @@ const temporary = await mkdtemp(join(tmpdir(), 'novaterminal-desktop-test-'))
 env.APPDATA = temporary
 env.XDG_CONFIG_HOME = temporary
 env.NOVA_TEST_PROFILE = temporary
-const args = ['scripts/electron-smoke.cjs']
-if (process.argv[2] && !dev) args.push(resolve(process.argv[2]))
+const args = [sidebar ? 'scripts/sidebar-smoke.cjs' : 'scripts/electron-smoke.cjs']
+const entry = process.argv.slice(2).find((argument) => !argument.startsWith('--'))
+if (entry) args.push(resolve(entry))
 const child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false })
 let passed = false
 let cleanupFailed = false

@@ -64,6 +64,7 @@ npm run dev
 | `npm start` | 启动已构建的桌面应用 |
 | `npm run package` | 构建当前平台的可运行目录包，输出到 `release/` |
 | `npm run test:desktop` | 执行真实 Electron、PTY 和临时 SSH 冒烟测试 |
+| `npm run test:sidebar` | 验证资产展开、拖放、右键菜单、保存失败及会话拖动 |
 | `npm run test:package` | 在独立临时目录验证 Windows exe、PTY、主题与退出清理 |
 
 在 Windows x64 上，运行 `npm run package` 后打开 `release/NovaTerminal-win32-x64/NovaTerminal.exe`。请保留整个目录，不能只复制可执行文件；此目录包内置 Electron / Node.js，运行时无需系统 Node.js 或 Vite。

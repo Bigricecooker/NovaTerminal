@@ -91,6 +91,7 @@ npm run check
 npm test
 npm run build
 npm run test:desktop
+npm run test:sidebar
 ```
 
 | 测试文件 | 主要覆盖 |
@@ -109,7 +110,9 @@ npm run test:desktop
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。PTY / SSH 集成测试通过 `tests/helpers/session-client.ts` 驱动正式的桌面会话管理器和会话核心；`tests/fixtures/session-worker.ts` 仅为系统 Node.js 测试提供进程适配，不是另一种应用运行模式。真实 utility process 和 preload 由 Electron 冒烟覆盖。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 
-当前没有持续集成。自动化测试不能替代人工拖动、系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
+`test:sidebar` 在独立临时配置中验证默认折叠、当前层级新增、搜索恢复、资产真实鼠标拖拽、非法循环阻止、刷新恢复、菜单边界定位、重命名、移动 / 删除对话框、存储失败和运行中会话标签移动。鼠标发起原生拖拽后，使用 Electron 调试协议接收拖拽数据并交付进入 / 悬停 / 放下事件；不读取个人资产。开发页面可用 `node scripts/test-desktop.mjs --sidebar --dev` 验证。
+
+当前没有持续集成。自动化测试不能替代系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
 
 ## 桌面交互测试
 
