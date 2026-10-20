@@ -42,6 +42,14 @@ app.on('browser-window-created', (_event, window) => {
       while (!window.isVisible()) { assert.ok(Date.now() < visibleDeadline, 'Desktop window must become visible'); await delay(30) }
       assert.equal(window.isMinimized(), false)
       await wait('Boolean(document.querySelector(\'button[aria-label="新建本地终端"]\'))')
+      if (process.env.NOVA_DEV_SERVER) {
+        window.focus()
+        window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F12' })
+        window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F12' })
+        const toolsDeadline = Date.now() + 5_000
+        while (!window.webContents.isDevToolsOpened()) { if (Date.now() >= toolsDeadline) throw new Error('Development shortcut must open DevTools'); await delay(30) }
+        window.webContents.closeDevTools()
+      }
       assert.equal(await evaluate('typeof require'), 'undefined')
       assert.equal(await evaluate('typeof window.novaTerminal.send'), 'function')
       assert.equal(await evaluate('typeof window.novaWindow.minimize'), 'function')

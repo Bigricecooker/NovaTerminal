@@ -11,7 +11,7 @@ delete env.NOVA_DEV_SERVER
 const dev = process.argv.includes('--dev')
 let server
 if (dev) {
-  server = await createServer({ mode: 'desktop', server: { host: '127.0.0.1', port: 5180, strictPort: true }, logLevel: 'error' })
+  server = await createServer({ logLevel: 'error' })
   await server.listen()
   env.NOVA_DEV_SERVER = 'http://127.0.0.1:5180/'
 }

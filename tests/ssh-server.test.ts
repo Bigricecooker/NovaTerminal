@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { createServer } from 'node:http'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import ssh2, { type Server as SshServer, type Connection, type ServerChannel } from 'ssh2'
-import { WebSocket } from 'ws'
-import { attachTerminalServer } from '../src/server/terminal-server.ts'
-import { HIGH_WATER, parseServerMessage, type ClientMessage, type ServerMessage, type SshOptions } from '../src/shared/terminal-protocol.ts'
+import { sessionHarness } from './helpers/session-client.ts'
+import { HIGH_WATER, type SshOptions } from '../src/shared/terminal-protocol.ts'
 import { terminalInputChunks } from '../src/shared/terminal-input.ts'
 
 // Keys and credentials belong only to this temporary protocol fixture.
@@ -29,8 +27,7 @@ async function wait(condition: () => boolean) {
 
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), 'nova-ssh-test-'))
-  const http = createServer()
-  const dispose = attachTerminalServer(http, undefined, directory)
+  const harness = sessionHarness(t, directory)
   const remotes: SshServer[] = []
   const connections = new Set<Connection>()
   const channels: ServerChannel[] = []
@@ -79,40 +76,20 @@ async function fixture(t: TestContext) {
     return { remote, port: address.port }
   }
   t.after(async () => {
-    dispose()
     for (const connection of connections) connection.end()
     await Promise.all(remotes.filter((remote) => remote.address() !== null).map((remote) => new Promise<void>((done) => remote.close(() => done()))))
-    await new Promise<void>((done) => http.close(() => done()))
     // Only remove this fixture's explicitly allocated temporary directory.
     assert.equal(dirname(resolve(directory)), resolve(tmpdir()))
     assert.match(basename(directory), /^nova-ssh-test-/)
     await rm(directory, { recursive: true, force: true })
   })
-  http.listen(0, '127.0.0.1')
-  await once(http, 'listening')
-  const address = http.address()
-  assert.ok(address && typeof address !== 'string')
   const first = await startRemote()
   const connect = async (auth: SshOptions['auth'] = { method: 'password', password: 'test-password' }, port = first.port, acknowledge = true) => {
-    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/api/terminal`, { origin: `http://127.0.0.1:${address.port}` })
-    t.after(() => socket.terminate())
-    const messages: ServerMessage[] = []
-    let output = ''
-    let ack = acknowledge
-    const send = (message: ClientMessage) => socket.send(JSON.stringify(message))
-    socket.on('message', (raw) => {
-      const message = parseServerMessage(raw.toString())
-      assert.ok(message)
-      messages.push(message)
-      if (message.type === 'output') {
-        output += message.data
-        if (ack && socket.readyState === WebSocket.OPEN) send({ type: 'ack', count: message.data.length })
-      }
-    })
-    await once(socket, 'open')
+    const client = harness.connect(acknowledge)
+    const { messages, send } = client
     send({ type: 'start', cols: 80, rows: 24, ssh: { host: '127.0.0.1', port, username: 'nova-test', auth } })
     return {
-      socket, messages, send, output: () => output,
+      ...client,
       trust: async (accept = true) => {
         await wait(() => messages.some((message) => message.type === 'host-key' || message.type === 'error'))
         const request = messages.find((message) => message.type === 'host-key')
@@ -124,11 +101,6 @@ async function fixture(t: TestContext) {
         await wait(() => messages.some((message) => message.type === 'ready' || message.type === 'error'))
         assert.ok(messages.some((message) => message.type === 'ready'), JSON.stringify(messages))
       },
-      acknowledge: () => {
-        ack = true
-        for (const message of messages) if (message.type === 'output') send({ type: 'ack', count: message.data.length })
-      },
-      close: async () => { const closed = once(socket, 'close'); socket.close(); await closed },
     }
   }
   return { ...first, connect, startRemote, directory, channels, sizes, inputs, authentications: () => authentications, closedChannels: () => closedChannels, connections: () => connections.size }
@@ -237,7 +209,7 @@ test('closing one SSH tab only closes its channel; other connections remain inte
   second.send({ type: 'input', data: 'STILL_ALIVE\r' })
   await wait(() => second.output().includes('ECHO:STILL_ALIVE\r'))
   assert.ok(!first.output().includes('STILL_ALIVE'))
-  assert.equal(second.socket.readyState, WebSocket.OPEN)
+  assert.equal(second.isOpen(), true)
 })
 
 test('SSH output pauses without ACK and resumes with bounded, valid acknowledgements', { timeout: 20_000 }, async (t) => {

@@ -12,7 +12,7 @@ import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
 export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; actionContainer: HTMLElement | null }) {
   const [state, dispatch] = useReducer(terminalTabsReducer, initialTerminalTabs)
-  // Secrets are handed to the socket once, never put in tab state or storage.
+  // Secrets are handed to the session once, never put in tab state or storage.
   const credentials = useRef(new Map<string, SshOptions>())
   const takeSshOptions = useCallback((id: string) => {
     const value = credentials.current.get(id)
@@ -77,7 +77,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
             </TabsList>
           </div>
           {state.tabs.map((tab) => (
-            // Keep background xterm instances and sockets alive; only closing removes them.
+            // Keep background xterm instances and sessions alive; only closing removes them.
             <TabsContent key={tab.id} value={tab.id} forceMount className="min-h-0 data-[state=active]:flex data-[state=inactive]:hidden">
               <TerminalSession dark={dark} active={state.activeId === tab.id} label={tab.label} id={tab.id} target={tab.target} takeSshOptions={takeSshOptions} />
             </TabsContent>

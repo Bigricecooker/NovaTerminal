@@ -14,7 +14,7 @@
 npm run dev
 ```
 
-该命令编译主进程、preload 和会话进程，在 `127.0.0.1:5180` 启动桌面专用 Vite 页面，再打开 Electron。此模式不加载 WebSocket 终端插件。前端支持热更新；修改 `src/main/`、`src/preload/` 或会话服务后重启命令。启动器退出时请求应用清理会话并关闭自己创建的 Vite 服务。
+该命令编译主进程、preload 和会话进程，在 `127.0.0.1:5180` 启动 Vite 页面，再打开 Electron。前端支持热更新，开发期按 F12 或 Windows / Linux 的 Ctrl+Shift+I、macOS 的 Cmd+Alt+I 切换 DevTools；修改 `src/main/`、`src/preload/` 或会话服务后重启命令。启动器退出时请求应用清理会话并关闭自己创建的 Vite 服务。开发与正式模式均通过 preload / IPC 访问会话，不提供独立浏览器模式或终端 WebSocket 服务。
 
 Windows 桌面启动使用 `windowsHide: false`。将 GUI 进程以隐藏方式启动，可能使首次 `BrowserWindow.show()` 后窗口仍不可见，即使页面已加载且进程正常运行。桌面冒烟测试同时检查窗口可见和未最小化，不能仅以进程存在或页面可截图作为显示成功的依据。启动器打印开发地址与桌面启动提示，异常启动或退出会显示错误。
 
@@ -35,7 +35,7 @@ npm run test:package
 
 源码按运行时划分为 `src/main`、`src/preload`、`src/renderer`、`src/server` 和 `src/shared`。Vite 根目录为 `src/renderer`，界面源码位于 `src/renderer/src`；`@` 指向界面源码，`@shared` 指向共享协议。共享协议不依赖 Electron、Node.js 或 React 的运行时能力。
 
-浏览器 PTY worker 相对于 `src/server/terminal-plugin.ts` 定位，不依赖 Vite 页面根目录或配置文件位置。桌面入口通过 esbuild 输出到 `out/electron/`，前端构建输出到仓库根目录 `dist/`。
+桌面入口通过 esbuild 输出到 `out/electron/`，前端构建输出到仓库根目录 `dist/`。二者及 `release/` 均是生成产物，源码只维护一套。`src/server/` 保存会话进程核心，不监听网络服务。
 
 桌面使用无系统边框窗口，最小化、最大化 / 还原、关闭按钮由 `window-controls.tsx` 绘制，与应用操作处于同一 48px React 页头，共用主题 tokens。页头为拖动区，操作按钮组为 `no-drag`。受限 `novaWindow` 仅提供三个固定窗口操作和最大化状态读取 / 订阅；主进程继续校验来源、主框架和动作白名单，原生状态变化同步回界面。窗口按钮无需独立颜色同步或原生叠加层安全区域。
 
@@ -44,29 +44,24 @@ npm run test:package
 | 位置 | 职责 |
 | --- | --- |
 | `src/renderer/src/App.tsx` | 页面布局、主题和工作区加载 |
-| `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
 | `src/renderer/src/components/terminal-workspace.tsx` | 标签状态、终端入口和临时凭据交接 |
 | `src/renderer/src/components/terminal-session.tsx` | xterm、会话状态、尺寸与输出确认 |
-| `src/renderer/src/lib/terminal-transport.ts` | 桌面 preload 与浏览器 WebSocket 传输适配 |
+| `src/renderer/src/lib/terminal-transport.ts` | preload 会话传输、待发送量与订阅清理 |
+| `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
 | `src/renderer/src/components/asset-*.tsx` | 资产侧栏和创建表单 |
 | `src/renderer/src/components/ssh-connection-dialog.tsx` | SSH 参数与认证表单 |
 | `src/renderer/src/components/ui/` | 由官方 CLI 引入的 shadcn/ui 组件 |
 | `src/shared/terminal-protocol.ts` | 共享消息类型、参数校验和资源限额 |
 | `src/renderer/src/lib/terminal-tabs.ts`、`src/renderer/src/lib/assets.ts` | 标签与资产模型 |
-| `src/server/terminal-plugin.ts` | 将会话服务接入 Vite 开发和预览生命周期 |
-| `src/server/terminal-server.ts` | 来源校验、WebSocket、会话路由与清理 |
 | `src/main/index.ts`、`src/preload/index.ts` | 桌面窗口、本地资源协议和受限桥接 |
 | `src/main/security.ts`、`src/main/sessions.ts` | IPC 来源 / 参数 / 归属校验、会话限额与清理 |
 | `src/server/session-worker.ts` | 独立进程持有本地 PTY 或 SSH 会话，共用协议及背压 |
-| `src/server/pty-worker.ts`、`src/main/session-worker.ts` | Node.js 子进程与 Electron utility process 的消息适配 |
+| `src/main/session-worker.ts` | Electron utility process 的消息适配 |
 | `src/server/ssh-session.ts`、`src/server/known-hosts.ts` | SSH 会话、主机校验与指纹记录 |
 
 ```text
-桌面：React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
-                                      └─ 每会话 utility process ⇄ node-pty / ssh2
-浏览器：React / xterm.js ⇄ 同源 WebSocket ⇄ 本机会话服务
-                                          ├─ 子进程 ⇄ node-pty
-                                          └─ ssh2
+React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
+                                └─ 每会话 utility process ⇄ node-pty / ssh2
 ```
 
 前端不能指定本机可执行文件、参数或工作目录。会话服务只接受约定的协议消息，不提供通用文件访问或命令执行 API。
@@ -75,7 +70,7 @@ npm run test:package
 
 粘贴输入使用共享分块函数，在协议长度限制内保留完整 UTF-16 代理对，避免 PTY / SSH 分别编码各块时破坏 emoji。主机指纹先写入同目录临时文件，再以硬链接原子发布完整记录；跨会话 / 进程同时确认相同指纹可成功，竞争中的不同指纹或异常记录继续拒绝。文件系统不支持硬链接时阻止首次信任，不退回可能覆盖旧记录的写法；异常中止可能留下仅含公开主机信息的 `.tmp` 文件，它们不会作为信任记录读取。
 
-桌面会话属于创建它的窗口；刷新、渲染进程退出或关闭窗口会清理所属会话。应用正常退出时先请求会话进程关闭，再限时等待退出；关闭中的进程在退出前仍占用资源名额。浏览器终端服务随所属 HTTP 服务关闭或宿主进程退出清理，不绑定 Vite 单个环境的 `closeBundle`，也不拦截宿主终止信号。修改这些行为时需运行生命周期回归测试。
+桌面会话属于创建它的窗口；刷新、渲染进程退出或关闭窗口会清理所属会话。应用正常退出时先请求会话进程关闭，再限时等待退出；关闭中的进程在退出前仍占用资源名额。修改这些行为时需运行生命周期回归测试。
 
 ## UI 维护
 
@@ -98,8 +93,8 @@ npm run test:desktop
 | --- | --- |
 | `tests/assets.test.ts` | 资产字段、数量、层级、引用、搜索与存储边界 |
 | `tests/terminal-tabs.test.ts` | 标签增删、选择、上限与会话标识 |
-| `tests/terminal-server.test.ts` | 来源 / 协议拒绝、真实本地 Shell、尺寸、背压与关闭隔离 |
-| `tests/terminal-plugin.test.ts` | 实际 Vite 配置的页面 / PTY、环境关闭、服务重启与宿主信号 |
+| `tests/terminal-session.test.ts` | 桌面会话管理下的协议拒绝、真实本地 Shell、尺寸、背压与关闭隔离 |
+| `tests/desktop-dev.test.ts` | Vite 页面与前端入口、回环监听配置及禁止页面嵌入 |
 | `tests/ssh-protocol.test.ts` | SSH 参数、认证内容与指纹响应校验 |
 | `tests/terminal-input.test.ts` | 分块边界的 Unicode 完整性、独立 UTF-8 编码及协议长度限制 |
 | `tests/known-hosts.test.ts` | 独立存储实例并发确认、不同指纹竞争、损坏记录与后续写入恢复 |
@@ -108,19 +103,19 @@ npm run test:desktop
 
 `test:desktop` 启动真实 Electron，检查窗口可见性、统一顶栏 / 拖动区域样式、鼠标输入触发最小化 / 最大化 / 还原 / 关闭、外部窗口状态变化同步、深浅主题、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴及退出清理。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
-测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
+测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。PTY / SSH 集成测试通过 `tests/helpers/session-client.ts` 驱动正式的桌面会话管理器和会话核心；`tests/fixtures/session-worker.ts` 仅为系统 Node.js 测试提供进程适配，不是另一种应用运行模式。真实 utility process 和 preload 由 Electron 冒烟覆盖。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 
-当前没有持续集成或独立浏览器自动化套件。自动化测试不能替代布局、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux、真实远端 SSH 与浏览器指纹确认流程需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
+当前没有持续集成。自动化测试不能替代人工拖动、系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
 
-## 浏览器交互测试
+## 桌面交互测试
 
-1. 确认目标端口由本项目 Vite 监听；未启动时执行 `npm run dev:web` 并等待 ready。请求 `http://127.0.0.1:5173/`，确认 HTTP 200 且页面内容属于 NovaTerminal。
-2. 在浏览器中打开开发地址，等待工作区加载。连接被拒绝时，先检查服务是否启动及端口是否一致，不放宽访问控制。
+1. 执行 `npm run dev`，等待 Electron 窗口可见；确认开发页面来自本项目的 `127.0.0.1:5180`。使用 `npm start` 检查已构建的应用。
+2. 检查顶栏按钮、深浅主题、最小化、最大化 / 还原、关闭及拖动。可在 Electron DevTools 检查界面和 IPC；普通浏览器没有 preload，不能提供终端功能。
 3. 新建本地终端，等待“运行中”和 Shell 提示符，输入 `echo NOVA_UI_OK` 并按回车，检查独立输出行。随后检查标签增删 / 切换、主题、SSH 认证方式切换及资产表单。需要验证保存和搜索时使用明确的测试数据，并说明数据保留或清理方式。
 4. 每次交互后检查最新页面状态；布局验证需截图确认。记录实际完成范围，区分表单显示、配置保存和真实连接。
 5. 结束后关闭自己创建的终端、取消未提交表单，恢复临时主题设置；不要关闭他人的会话或停止原有开发服务。
 
-预览环境使用 `http://127.0.0.1:4173/`，需先构建并启动 `npm run preview`，再执行同样的服务就绪检查。
+构建预览使用 `npm run build` 后执行 `npm start`，验证与正式资源一致的桌面链路。
 
 ## 依赖安全检查
 

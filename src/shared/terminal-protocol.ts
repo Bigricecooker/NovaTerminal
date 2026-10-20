@@ -1,4 +1,3 @@
-export const TERMINAL_PATH = '/api/terminal'
 export const MAX_SESSIONS = 4
 export const MAX_INPUT = 16_384
 export const MAX_BUFFER = 1_048_576

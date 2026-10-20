@@ -6,7 +6,7 @@
 - 用户沟通与项目说明默认中文；代码标识符和提交标题使用清晰英文。
 - 提交信息遵循 [贡献指南中的 Conventional Commits 规范](CONTRIBUTING.md#提交规范)，统一以该处定义的格式、类型和命名规则为准。
 - 项目自有文案只使用 NovaTerminal 名称，不引用其他产品或作品牌对比；技术依赖、配置路径和第三方许可中保留必要的真实名称。
-- 当前是 Electron + React + TypeScript + shadcn/ui 桌面应用，保留 Vite 浏览器开发模式。桌面通过受限 preload / IPC 和独立 utility process 提供本地 PTY 与 SSH；浏览器通过仅限本机的 Vite 插件提供会话服务。SSH 首次指纹需确认，变化时拒绝；不保存密码或私钥。
+- 当前是 Electron + React + TypeScript + shadcn/ui 桌面应用，Vite 仅提供桌面开发热更新，不维护独立浏览器运行模式。桌面通过受限 preload / IPC 和独立 utility process 提供本地 PTY 与 SSH。SSH 首次指纹需确认，变化时拒绝；不保存密码或私钥。
 - 使用 npm 和 `package-lock.json`。安装用 `npm ci`，开发用 `npm run dev`，检查用 `npm run check`，测试用 `npm test`，构建用 `npm run build`。
 
 ## 工作方式

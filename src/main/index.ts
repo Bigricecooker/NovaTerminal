@@ -40,6 +40,11 @@ async function createWindow() {
   }
   current.on('maximize', publishState)
   current.on('unmaximize', publishState)
+  if (dev) current.webContents.on('before-input-event', (event, input) => {
+    const shortcut = input.key === 'F12' || input.key.toLowerCase() === 'i'
+      && (process.platform === 'darwin' ? input.meta && input.alt : input.control && input.shift)
+    if (input.type === 'keyDown' && shortcut) { event.preventDefault(); current.webContents.toggleDevTools() }
+  })
   current.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   current.webContents.session.setPermissionCheckHandler(() => false)
   current.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

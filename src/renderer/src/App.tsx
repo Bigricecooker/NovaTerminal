@@ -15,6 +15,8 @@ export default function App() {
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
   }, [dark])
 
+  if (!window.novaTerminal) return <main className="p-4" role="alert">请通过 NovaTerminal 桌面应用启动。</main>
+
   return (
     <div className="flex h-dvh min-h-64 flex-col overflow-hidden bg-background text-foreground">
       <header className="app-titlebar shrink-0 bg-background">

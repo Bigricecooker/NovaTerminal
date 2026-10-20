@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { spawn, type IPty, type IDisposable } from 'node-pty'
 import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, parseClientMessage, type ServerMessage } from '../shared/terminal-protocol.ts'
 
-import { createKnownHosts } from './known-hosts.ts'
+import { createKnownHosts, type KnownHosts } from './known-hosts.ts'
 import { createSshSession, type SshSession } from './ssh-session.ts'
 
 export type WorkerTransport = {
@@ -12,7 +12,7 @@ export type WorkerTransport = {
   onDisconnect: (callback: () => void) => void
 }
 
-export function runSessionWorker(transport: WorkerTransport): void {
+export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHosts = createKnownHosts()): void {
   let pty: IPty | undefined
   let ssh: SshSession | undefined
   let subscriptions: IDisposable[] = []
@@ -64,7 +64,7 @@ export function runSessionWorker(transport: WorkerTransport): void {
         case 'start': {
           if (pty) { fail('终端会话已经启动。'); return }
           if (message.ssh) {
-            ssh = createSshSession(message.ssh, message.cols, message.rows, createKnownHosts(), (output) => {
+            ssh = createSshSession(message.ssh, message.cols, message.rows, knownHosts, (output) => {
               send(output, output.type === 'error' || output.type === 'exit' ? shutdown : undefined)
             })
             return

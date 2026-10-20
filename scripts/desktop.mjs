@@ -5,7 +5,7 @@ import { createServer } from 'vite'
 let server
 if (process.argv.includes('--dev')) {
   await import('./build-desktop.mjs')
-  server = await createServer({ mode: 'desktop', server: { host: '127.0.0.1', port: 5180, strictPort: true } })
+  server = await createServer()
   await server.listen()
   server.printUrls()
 }

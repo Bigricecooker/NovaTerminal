@@ -81,7 +81,7 @@ export function TerminalSession({ dark, active, label, id, target, takeSshOption
     const fitTerminal = () => {
       if (disposed) return
       const visible = element.clientWidth > 0 && element.clientHeight > 0
-      // A newly opened tab may already be in the background by the time WS opens.
+      // A newly opened tab may already be in the background when its session opens.
       // Start it with xterm's initial dimensions; fit once it becomes visible.
       if (visible) fit.fit()
       // FitAddon can propose dimensions beyond our protocol limits on very large displays.

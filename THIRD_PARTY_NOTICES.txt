@@ -1,6 +1,7 @@
 NovaTerminal third-party notices
 
 Scope: direct runtime dependencies, Electron runtime, generated UI source, fonts, and CSS build inputs.
+The ws dependency is now used only by development and package verification tools; its upstream notice is retained.
 This is not an inventory of every transitive or development dependency. Review the full bundled dependency graph before distributing build artifacts.
 Installed versions are locked in package-lock.json. Preserve upstream notices when updating dependencies.
 Electron 44.9.0 follows licenses/electron-LICENSE.txt. Desktop packages retain the runtime's LICENSE and LICENSES.chromium.html notices alongside application notices.

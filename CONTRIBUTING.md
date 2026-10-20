@@ -63,7 +63,7 @@ chore(repo): initialize NovaTerminal repository
 
 ## 验证与依赖
 
-安装依赖使用 `npm ci`。代码变更运行 `npm run check`、`npm test` 和 `npm run build`，UI 交互变更还应在浏览器中验证。测试的运行条件、覆盖范围与浏览器操作见 [开发指南](docs/development.md)。纯文档变更检查链接、格式和内容一致性。变更说明应列出实际验证命令及未验证的平台或交互。
+安装依赖使用 `npm ci`。代码变更运行 `npm run check`、`npm test` 和 `npm run build`，UI 交互变更还应在真实 Electron 窗口中验证。测试的运行条件、覆盖范围与桌面操作见 [开发指南](docs/development.md)。纯文档变更检查链接、格式和内容一致性。变更说明应列出实际验证命令及未验证的平台或交互。
 
 新增依赖应核对维护状态、许可与版本兼容性，并同步依赖锁文件和必要的第三方声明。通过官方 CLI 引入 UI 组件，保留其上游许可。不要提交本机依赖目录、构建产物、密钥或个人环境配置。
 

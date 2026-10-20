@@ -1,5 +1,7 @@
-import { runSessionWorker } from './session-worker.ts'
+import { runSessionWorker } from '../../src/server/session-worker.ts'
+import { createKnownHosts } from '../../src/server/known-hosts.ts'
 
+// System-Node adapter for testing the same session core used by utilityProcess.
 runSessionWorker({
   send: (message, callback) => {
     if (!process.connected || !process.send) { callback(new Error('Parent disconnected')); return }
@@ -11,4 +13,4 @@ runSessionWorker({
     process.once('SIGTERM', callback)
     process.once('SIGINT', callback)
   },
-})
+}, createKnownHosts(process.argv[2]))
