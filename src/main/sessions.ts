@@ -91,7 +91,7 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
             if (!resolveSsh) throw new Error('No credential resolver')
             message = { type: 'start', cols: message.cols, rows: message.rows, ssh: resolveSsh(message.savedSsh) }
           } catch {
-            fail(id, '无法读取此连接的系统安全存储认证信息；请确认密钥库已解锁。旧连接或凭据失效时，请删除后重新添加。')
+            fail(id, '无法读取此连接的系统安全存储认证信息；请确认密钥库已解锁。旧连接或凭据失效时，请编辑连接并重新填写认证信息。')
             return false
           }
         }

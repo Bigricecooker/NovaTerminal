@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetSubtreeIds, assetTree, deleteAsset, groupOptions, initialAssetView, loadAssets, loadAssetWorkspace, moveAsset, normalizeAssetView, parseAssetDocument, renameAsset, saveAssets, saveAssetWorkspace, viewAfterAppend, type Asset } from '../src/renderer/src/lib/assets.ts'
+import { ASSET_STORAGE_KEY, MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetSubtreeIds, assetTree, deleteAsset, editConnection, groupOptions, initialAssetView, loadAssets, loadAssetWorkspace, moveAsset, normalizeAssetView, parseAssetDocument, renameAsset, saveAssets, saveAssetWorkspace, viewAfterAppend, type Asset } from '../src/renderer/src/lib/assets.ts'
 
 const assets: Asset[] = [
   { kind: 'group', id: 'prod', name: '生产环境', parentId: null },
@@ -11,6 +11,28 @@ const assets: Asset[] = [
   { kind: 'connection', id: 'root', name: '独立服务器', parentId: null, host: '127.0.0.1', port: 22, username: 'user' },
 ]
 const document = (entries: unknown) => ({ version: 1, assets: entries })
+
+test('editing connections preserves identity and order while validating config and credential references', () => {
+  const draft = { kind: 'connection', name: '新 API', parentId: 'test', host: 'NEW.EXAMPLE.TEST', port: 2222, username: 'new-user', credentialId: 'revision-one' } as const
+  const edited = editConnection(assets, 'api', draft)
+  assert.ok(edited)
+  assert.deepEqual(edited.map((asset) => asset.id), assets.map((asset) => asset.id))
+  assert.deepEqual(edited[2], { ...draft, id: 'api', host: 'new.example.test' })
+  assert.equal(assets[2]?.name, 'API')
+  let raw = ''
+  saveAssets({ setItem: (_key, value) => { raw = value } }, edited)
+  assert.deepEqual(loadAssets({ getItem: () => raw }).assets, edited)
+  for (const invalid of [{ name: ' ' }, { port: 0 }, { parentId: 'missing' }, { credentialId: '../escape' }, { credentialId: 'db' }]) {
+    assert.equal(editConnection(assets, 'api', { ...draft, ...invalid }), null)
+  }
+  assert.equal(editConnection(assets, 'prod', draft), null)
+  assert.equal(editConnection(assets, 'missing', draft), null)
+  assert.equal(editConnection(assets, 'api', { kind: 'local', name: 'local', parentId: null, directory: '/work' }), null)
+  const local = appendAsset(assets, { kind: 'local', name: '工作', parentId: null, directory: '/old' }, 'local')
+  assert.ok(local)
+  assert.equal(editConnection(local, 'local', { kind: 'local', name: '新工作', parentId: 'prod', directory: '/new' })?.at(-1)?.name, '新工作')
+  assert.equal(editConnection(local, 'local', { kind: 'local', name: '工作', parentId: null, directory: 'relative' }), null)
+})
 
 test('ungrouped SSH and local connections stay top-level after folders across moves and reloads', () => {
   const local = { kind: 'local', name: '工作目录', parentId: null, directory: '/work' } as const

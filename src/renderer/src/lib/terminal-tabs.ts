@@ -1,9 +1,10 @@
 import { MAX_SESSIONS, type SavedSshConnection } from '../../../shared/terminal-protocol.ts'
 
 export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & SavedSshConnection)
-type TerminalTab = { id: string; label: string; target: TerminalTarget }
+type TerminalTab = { id: string; label: string; target: TerminalTarget; assetId?: string }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
-type TabAction = { type: 'open'; ssh?: SavedSshConnection; local?: { directory: string; name: string } }
+type TabAction = { type: 'open'; ssh?: SavedSshConnection; name?: string; assetId?: string; local?: { directory: string; name: string } }
+  | { type: 'sync-assets'; assets: { id: string; name: string }[] }
   | { type: 'select' | 'close'; id: string }
   | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
 
@@ -14,9 +15,18 @@ export function terminalTabsReducer(state: TerminalTabs, action: TabAction): Ter
     case 'open': {
       if (state.tabs.length >= MAX_SESSIONS) return state
       const tab: TerminalTab = action.ssh
-        ? { id: `ssh-${state.nextId}`, label: `${action.ssh.username}@${action.ssh.host}`, target: { kind: 'ssh', ...action.ssh } }
+        ? { id: `ssh-${state.nextId}`, label: action.name ?? `${action.ssh.username}@${action.ssh.host}`, target: { kind: 'ssh', ...action.ssh } }
         : { id: `local-${state.nextId}`, label: action.local?.name ?? `本地终端 ${state.nextId}`, target: { kind: 'local', ...(action.local ? { cwd: action.local.directory } : {}) } }
+      if (action.assetId) tab.assetId = action.assetId
       return { tabs: [...state.tabs, tab], activeId: tab.id, nextId: state.nextId + 1 }
+    }
+    case 'sync-assets': {
+      const names = new Map(action.assets.map((asset) => [asset.id, asset.name]))
+      const tabs = state.tabs.map((tab) => {
+        const name = tab.assetId ? names.get(tab.assetId) : undefined
+        return name && name !== tab.label ? { ...tab, label: name } : tab
+      })
+      return tabs.every((tab, index) => tab === state.tabs[index]) ? state : { ...state, tabs }
     }
     case 'select':
       return state.tabs.some((tab) => tab.id === action.id) ? { ...state, activeId: action.id } : state

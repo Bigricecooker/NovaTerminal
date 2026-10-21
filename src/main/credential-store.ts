@@ -6,7 +6,7 @@ import { credentialId, parseSshOptions, type SavedSshConnection, type SshOptions
 export type CredentialProtector = { available: () => boolean; encrypt: (value: string) => Buffer; decrypt: (value: Buffer) => string }
 const MAX_SIZE = 524_288
 const UNAVAILABLE = '系统安全存储不可用，无法保存或使用 SSH 认证信息。请解锁系统密钥库后重试。'
-const MISSING = '此连接的认证信息缺失、损坏或与端点不匹配，请删除此连接后重新添加。'
+const MISSING = '此连接的认证信息缺失、损坏或与端点不匹配，请编辑此连接并重新填写认证信息。'
 const hasCode = (error: unknown, code: string) => error instanceof Error && 'code' in error && error.code === code
 
 // The renderer can write and remove credentials, but cannot retrieve decrypted values.
@@ -24,7 +24,8 @@ export function createCredentialStore(directory: string, protector: CredentialPr
       let published = false
       try {
         mkdirSync(directory, { recursive: true, mode: 0o700 })
-        if (readdirSync(directory).filter((name) => name.endsWith('.bin')).length >= 500) throw new Error('Credential limit')
+        // Reserve one record for replacing credentials without destroying the old record first.
+        if (readdirSync(directory).filter((name) => name.endsWith('.bin')).length >= 501) throw new Error('Credential limit')
         const encrypted = protector.encrypt(JSON.stringify({ version: 1, options }))
         if (!encrypted.length || encrypted.length > MAX_SIZE) throw new Error('Invalid ciphertext size')
         writeFileSync(temporary, encrypted, { flag: 'wx', mode: 0o600 })

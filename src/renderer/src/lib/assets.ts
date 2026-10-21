@@ -5,10 +5,12 @@ export const MAX_ASSETS = 500
 export const MAX_GROUP_DEPTH = 8
 const MAX_DOCUMENT_SIZE = 524_288
 export type AssetGroup = { kind: 'group'; id: string; name: string; parentId: string | null }
-export type AssetConnection = { kind: 'connection'; id: string; name: string; parentId: string | null } & SshEndpoint
+export type AssetConnection = { kind: 'connection'; id: string; name: string; parentId: string | null; credentialId?: string } & SshEndpoint
 export type AssetLocalConnection = { kind: 'local'; id: string; name: string; parentId: string | null; directory: string }
 export type Asset = AssetGroup | AssetConnection | AssetLocalConnection
 export type AssetDraft = Omit<AssetGroup, 'id'> | Omit<AssetConnection, 'id'> | Omit<AssetLocalConnection, 'id'>
+export type ConnectionAsset = AssetConnection | AssetLocalConnection
+export type ConnectionDraft = Omit<AssetConnection, 'id'> | Omit<AssetLocalConnection, 'id'>
 export type AssetNode = { asset: Asset; children: AssetNode[] }
 export type AssetView = { expandedIds: string[]; currentGroupId: string | null }
 export const initialAssetView: AssetView = { expandedIds: [], currentGroupId: null }
@@ -34,8 +36,8 @@ export function parseAssetDocument(value: unknown): Asset[] | null {
     if (item.kind === 'group') assets.push({ ...base, kind: 'group' })
     else if (item.kind === 'connection') {
       const endpoint = parseSshEndpoint(item)
-      if (!endpoint) return null
-      assets.push({ ...base, kind: 'connection', ...endpoint })
+      if (!endpoint || item.credentialId !== undefined && !validId(item.credentialId)) return null
+      assets.push({ ...base, kind: 'connection', ...endpoint, ...(item.credentialId !== undefined ? { credentialId: item.credentialId } : {}) })
     } else if (item.kind === 'local') {
       const directory = parseLocalDirectory(item.directory)
       if (!directory) return null
@@ -44,6 +46,8 @@ export function parseAssetDocument(value: unknown): Asset[] | null {
   }
   const byId = new Map(assets.map((asset) => [asset.id, asset]))
   if (byId.size !== assets.length) return null
+  const references = assets.filter((asset) => asset.kind === 'connection').map((asset) => asset.credentialId ?? asset.id)
+  if (new Set(references).size !== references.length) return null
   for (const asset of assets) {
     let current: Asset = asset
     const visited = new Set([asset.id])
@@ -65,6 +69,12 @@ export function appendAsset(assets: Asset[], draft: AssetDraft, id: string): Ass
 export function renameAsset(assets: Asset[], id: string, name: string): Asset[] | null {
   if (!assets.some((asset) => asset.id === id)) return null
   return parseAssetDocument({ version: 1, assets: assets.map((asset) => asset.id === id ? { ...asset, name } : asset) })
+}
+
+export function editConnection(assets: Asset[], id: string, draft: ConnectionDraft): Asset[] | null {
+  const original = assets.find((asset) => asset.id === id)
+  if (!original || original.kind === 'group' || original.kind !== draft.kind) return null
+  return parseAssetDocument({ version: 1, assets: assets.map((asset) => asset.id === id ? { ...draft, id } : asset) })
 }
 
 export function moveAsset(assets: Asset[], id: string, parentId: string | null): Asset[] | null {

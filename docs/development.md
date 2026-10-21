@@ -44,12 +44,12 @@ npm run test:package
 | 位置 | 职责 |
 | --- | --- |
 | `src/renderer/src/App.tsx` | 页面布局、主题和工作区加载 |
-| `src/renderer/src/components/terminal-workspace.tsx` | 标签状态、终端入口和临时凭据交接 |
+| `src/renderer/src/components/terminal-workspace.tsx` | 标签状态、连接入口和资产名称同步 |
 | `src/renderer/src/components/terminal-session.tsx` | xterm、会话状态、尺寸与输出确认 |
 | `src/renderer/src/lib/terminal-transport.ts` | preload 会话传输、待发送量与订阅清理 |
 | `src/renderer/src/components/window-controls.tsx` | 页头窗口按钮和最大化状态同步 |
-| `src/renderer/src/components/asset-*.tsx` | 资产树、创建、重命名 / 移动 / 删除对话框与右键菜单 |
-| `src/renderer/src/components/ssh-connection-fields.tsx` | 创建 SSH 连接时填写参数与认证信息 |
+| `src/renderer/src/components/asset-*.tsx` | 资产树、创建 / 编辑、重命名 / 移动 / 删除对话框与右键菜单 |
+| `src/renderer/src/components/ssh-connection-fields.tsx` | 创建 / 编辑 SSH 连接的参数与认证表单 |
 | `src/main/credential-store.ts` | 有界加密凭据存储、端点绑定及删除，系统保护能力由主进程注入 |
 | `src/renderer/src/components/ui/` | 由官方 CLI 引入的 shadcn/ui 组件 |
 | `src/shared/terminal-protocol.ts` | 共享消息类型、参数校验和资源限额 |
@@ -77,9 +77,11 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
 
 资产侧栏将资产与展开 / 当前层级状态作为同一工作区文档保存到 `novaterminal.assets.v1`。SSH 沿用 `connection` 类型，本地目录使用 `local` 类型；只保存公开配置。`parentId: null` 的分组和连接共用顶层列表，分组优先、同类按创建顺序排列；“未分组”仅是连接分组选项，不创建同名节点、容器或 ID。列表空白处提供顶层拖放目标，点击空白处清除当前分组选择。旧版文档兼容读取，默认不展开；新状态只保留有效分组 ID。所有资产变更和持久展开状态先保存再更新 React 状态，失败时保留原文档与界面。搜索使用独立的临时展开状态，清除搜索不会展开其他分组。
 
-新建 SSH 的分组下拉框默认“未分组”，可手动选择已有分组；支持仅保存或保存并连接，两种方式均需填写认证信息。通过 `novaCredentials.save()` 将密码 / 私钥加密保存，认证字段不进入资产文档；安全存储失败时不新增资产，公开配置保存失败时回滚凭据。删除资产后清理对应加密记录，失败时提示；移动和重命名不改变凭据引用。本地连接通过 `novaDirectories.pick()` 调用无参数目录选择 IPC，主进程限制单次选择并校验来源；取消时不创建连接。资产保存成功后才打开指定目录的固定 Shell，会话进程校验绝对路径与真实目录，失效时明确报错。
+工具栏新建 SSH 默认“未分组”，分组右键菜单“添加连接”默认该分组，均可手动调整；支持仅保存或保存并连接，两种方式均需填写认证信息。通过 `novaCredentials.save()` 将密码 / 私钥加密保存，认证字段不进入资产文档；安全存储失败时不新增资产，公开配置保存失败时回滚凭据。本地连接通过 `novaDirectories.pick()` 调用无参数目录选择 IPC，主进程限制单次选择并校验来源；取消时不创建连接。资产保存成功后才打开指定目录的固定 Shell，会话进程校验绝对路径与真实目录，失效时明确报错。
 
-资产连接使用双击或 Enter / 空格直接打开，单击只更新当前分组层级。原 SSH 认证弹窗及逐会话 renderer 凭据缓存已删除。标签只保留资产 ID 和公开端点，`start.savedSsh` 在主进程校验归属后解析为会话启动参数；秘密不返回 renderer，worker 拒绝未解析的引用。安全存储使用 `safeStorage`，拒绝 Linux 明文后端，开发 / 正式记录隔离；详细边界见安全说明。旧资产或损坏记录在终端中明确报错，需删除后重新创建。
+`AssetEditDialog` 复用 SSH 字段和分组选项，支持修改连接名称、分组、端点及本地目录。SSH 默认保留认证；端点变化需重新填写认证，秘密不回填。更换认证采用独立加密记录：资产 `id` 保持不变，可选公开字段 `credentialId` 指向当前记录，旧文档缺省使用资产 ID。先保存新记录，再原子保存资产文档，失败清理新记录；成功清理旧记录，清理失败单独提示。主进程最多允许 501 条记录，为 500 项资产预留一次替换空间。引用执行格式与唯一性校验；删除资产按有效引用清理，移动和重命名保持引用。
+
+资产连接使用双击或 Enter / 空格直接打开，单击只更新当前分组层级。SSH 悬停显示用户名@主机，标签使用连接名称。标签分别保留用于名称同步的资产 ID，以及启动时的公开端点 / 凭据引用；`sync-assets` 仅更新名称并保持 `target` 对象，避免触发 `TerminalSession` 重连，本地目录修改也只用于新会话。`start.savedSsh.assetId` 使用有效凭据引用，在主进程校验归属后解析为会话启动参数；秘密不返回 renderer，worker 拒绝未解析的引用。安全存储使用 `safeStorage`，拒绝 Linux 明文后端，开发 / 正式记录隔离；详细边界见安全说明。旧资产或损坏记录在终端中明确报错，可通过编辑重新填写认证。
 
 真实 Electron 冒烟验证单击无弹窗 / 无会话、双击仅打开一次、键盘操作、会话上限、加密记录不含明文、锁定安全存储失败、公开资产保存失败回滚、重新加载免填连接和删除清理。单元测试覆盖密码 / 私钥记录恢复、端点绑定、损坏 / 超限 / 路径输入和会话归属；原生系统安全存储由真实 Electron 验证。
 
@@ -119,7 +121,7 @@ npm run test:sidebar
 
 测试会在本机启动真实 Shell 和临时 SSH 协议服务，使用临时密钥及独立指纹目录，不依赖外部服务器或个人凭据。PTY / SSH 集成测试通过 `tests/helpers/session-client.ts` 驱动正式的桌面会话管理器和会话核心；`tests/fixtures/session-worker.ts` 仅为系统 Node.js 测试提供进程适配，不是另一种应用运行模式。真实 utility process 和 preload 由 Electron 冒烟覆盖。运行环境必须允许创建子进程及绑定回环端口；`spawn EPERM` 等权限错误需要结合执行环境判断。
 
-`test:sidebar` 在独立临时配置中验证默认折叠、当前层级新增、搜索恢复、资产真实鼠标拖拽、非法循环阻止、刷新恢复、菜单边界定位、重命名、移动 / 删除对话框、存储失败和运行中会话标签移动。鼠标发起原生拖拽后，使用 Electron 调试协议接收拖拽数据并交付进入 / 悬停 / 放下事件；不读取个人资产。开发页面可用 `node scripts/test-desktop.mjs --sidebar --dev` 验证。
+`test:sidebar` 在独立临时配置中验证默认折叠、工具栏 / 分组菜单新增范围、SSH 编辑预填与端点认证校验、编辑刷新恢复、本地目录编辑和运行中标签名称同步、搜索恢复、资产真实鼠标拖拽、非法循环阻止、菜单边界、重命名、移动 / 删除对话框、存储失败和运行中会话标签移动。`test:desktop` 另验证真实 SSH 编辑后仍可免填重连、认证替换及安全存储 / 公开配置失败回滚。鼠标发起原生拖拽后，使用 Electron 调试协议接收拖拽数据并交付进入 / 悬停 / 放下事件；不读取个人资产。开发页面可用 `node scripts/test-desktop.mjs --sidebar --dev` 验证。
 
 当前没有持续集成。自动化测试不能替代系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
 

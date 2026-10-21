@@ -5,9 +5,9 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
 import type { SshEndpoint } from '@shared/terminal-protocol'
 
-export function SshConnectionFields({ endpoint, required = true }: { endpoint?: SshEndpoint; required?: boolean }) {
+export function SshConnectionFields({ endpoint, required = true, allowKeepAuth = false }: { endpoint?: SshEndpoint; required?: boolean; allowKeepAuth?: boolean }) {
   const id = useId()
-  const [method, setMethod] = useState('password')
+  const [method, setMethod] = useState(allowKeepAuth ? 'keep' : 'password')
   return (
     <>
       <Field>
@@ -25,16 +25,18 @@ export function SshConnectionFields({ endpoint, required = true }: { endpoint?: 
       <Field>
         <FieldLabel htmlFor={`${id}-method`}>认证方式</FieldLabel>
         <NativeSelect id={`${id}-method`} name="authMethod" value={method} onChange={(event) => { setMethod(event.target.value) }}>
+          {allowKeepAuth && <NativeSelectOption value="keep">保留现有认证</NativeSelectOption>}
           <NativeSelectOption value="password">密码</NativeSelectOption>
           <NativeSelectOption value="privateKey">私钥</NativeSelectOption>
         </NativeSelect>
+        {allowKeepAuth && <FieldDescription>修改主机、端口或用户名时，请选择密码或私钥并重新填写认证信息。已保存的秘密不会回填。</FieldDescription>}
       </Field>
       {method === 'password' ? (
         <Field>
           <FieldLabel htmlFor={`${id}-password`}>密码</FieldLabel>
           <Input id={`${id}-password`} name="password" type="password" required={required} maxLength={4096} autoComplete="off" />
         </Field>
-      ) : (
+      ) : method === 'privateKey' ? (
         <>
           <Field>
             <FieldLabel htmlFor={`${id}-privateKey`}>私钥内容</FieldLabel>
@@ -46,7 +48,7 @@ export function SshConnectionFields({ endpoint, required = true }: { endpoint?: 
             <Input id={`${id}-passphrase`} name="passphrase" type="password" maxLength={4096} autoComplete="off" />
           </Field>
         </>
-      )}
+      ) : null}
     </>
   )
 }

@@ -2,6 +2,7 @@ import { useId, useRef, useState, type DragEvent } from 'react'
 import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TerminalIcon, TrashIcon, XIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { AssetCreateDialog } from '@/components/asset-create-dialog'
+import { AssetEditDialog } from '@/components/asset-edit-dialog'
 import { AssetActionDialog, type AssetAction } from '@/components/asset-action-dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -9,13 +10,14 @@ import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, Con
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { Separator } from '@/components/ui/separator'
-import { MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, groupOptions, initialAssetView, loadAssetWorkspace, moveAsset, normalizeAssetView, saveAssetWorkspace, viewAfterAppend, type Asset, type AssetDraft, type AssetNode, type AssetView } from '@/lib/assets'
-import { parseLocalDirectory, type SavedSshConnection, type SshOptions } from '@shared/terminal-protocol'
+import { MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, editConnection, groupOptions, initialAssetView, loadAssetWorkspace, moveAsset, normalizeAssetView, saveAssetWorkspace, viewAfterAppend, type Asset, type AssetConnection, type AssetDraft, type AssetNode, type AssetView, type ConnectionAsset, type ConnectionDraft } from '@/lib/assets'
+import { parseLocalDirectory, type SshOptions } from '@shared/terminal-protocol'
 
 const ASSET_DRAG = 'application/x-novaterminal-asset'
 
-export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
-  atLimit: boolean; onConnect: (connection: SavedSshConnection) => boolean; onOpenLocal: (directory: string, name: string) => boolean
+export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }: {
+  atLimit: boolean; onConnect: (connection: AssetConnection) => boolean; onOpenLocal: (directory: string, name: string, assetId?: string) => boolean
+  onAssetsChange: (assets: Asset[]) => void
 }) {
   const [initial] = useState(() => {
     try { return loadAssetWorkspace(window.localStorage) }
@@ -31,6 +33,7 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
   const [picking, setPicking] = useState(false)
   const pickerPending = useRef(false)
   const [action, setAction] = useState<AssetAction | null>(null)
+  const [editing, setEditing] = useState<ConnectionAsset | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const dragging = useRef<string | null>(null)
   const dialogPending = useRef(false)
@@ -47,6 +50,7 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
     try { saveAssetWorkspace(window.localStorage, next, safeView) }
     catch { return '保存失败，请检查本机存储权限或可用空间；原有配置和展开状态保持不变。' }
     setWorkspace({ assets: next, view: safeView })
+    onAssetsChange(next)
     setError('')
     return null
   }
@@ -54,8 +58,7 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
     const failure = persist(assets, next)
     if (failure) setError(failure)
   }
-  const save = async (draft: AssetDraft, ssh?: { options: SshOptions; connect: boolean }): Promise<string | null> => {
-    const newId = crypto.randomUUID()
+  const save = async (draft: AssetDraft, ssh?: { options: SshOptions; connect: boolean }, newId = crypto.randomUUID()): Promise<string | null> => {
     const next = appendAsset(assets, draft, newId)
     if (!next) return `无法保存，请检查所属分组和配置；资产最多 ${MAX_ASSETS} 项。`
     if (draft.kind === 'connection') {
@@ -73,7 +76,35 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
     }
     setQuery('')
     setStatus(`已保存“${draft.name}”。`)
-    if (draft.kind === 'connection' && ssh?.connect) onConnect({ assetId: newId, host: draft.host, port: draft.port, username: draft.username })
+    if (draft.kind === 'connection' && ssh?.connect) onConnect({ ...draft, id: newId })
+    return null
+  }
+  const edit = async (draft: ConnectionDraft, options?: SshOptions): Promise<string | null> => {
+    if (!editing) return '连接已不存在，请重新打开编辑。'
+    const previous = editing.kind === 'connection' ? editing.credentialId ?? editing.id : null
+    const reference = options ? crypto.randomUUID() : previous
+    const updated: ConnectionDraft = draft.kind === 'connection' && reference ? { ...draft, credentialId: reference } : draft
+    const next = editConnection(assets, editing.id, updated)
+    if (!next) return '无法保存，请检查名称、所属分组和连接配置。'
+    if (options && reference) {
+      if (!window.novaCredentials) return '无法保存 SSH 认证信息，请通过桌面应用编辑连接。'
+      try { await window.novaCredentials.save(reference, options) }
+      catch { return '无法安全保存 SSH 认证信息，请检查系统密钥库是否可用及本机存储权限。' }
+    }
+    const failure = persist(next, view)
+    if (failure) {
+      if (options && reference) {
+        try { await window.novaCredentials?.remove([reference]) }
+        catch { return `${failure} 新认证信息清理失败，请检查本机存储权限。` }
+      }
+      return failure
+    }
+    setQuery('')
+    setStatus(`已更新“${draft.name}”。`)
+    if (options && previous) {
+      try { await window.novaCredentials?.remove([previous]) }
+      catch { setError('连接已更新，但旧加密认证信息清理失败，请检查本机存储权限。') }
+    }
     return null
   }
   const move = (source: string, parentId: string | null) => {
@@ -93,9 +124,11 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
       const directory = parseLocalDirectory(selected)
       if (!directory) throw new Error('Invalid directory')
       const name = (directory.split(/[\\/]/).filter(Boolean).at(-1) ?? directory).slice(0, 80)
-      const failure = await save({ kind: 'local', name, parentId: null, directory })
+      const localId = crypto.randomUUID()
+      const draft = { kind: 'local', name, parentId: null, directory } as const
+      const failure = await save(draft, undefined, localId)
       if (failure) { setError(failure); return }
-      onOpenLocal(directory, name)
+      onOpenLocal(directory, name, localId)
     } catch { setError('无法选择本地目录，请重新尝试。') }
     finally { pickerPending.current = false; setPicking(false) }
   }
@@ -118,8 +151,8 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
     dragging.current = null; setDropTarget(null)
   }
   const closeDialog = () => {
-    const itemId = action?.id
-    setCreating(null); setAction(null); dialogPending.current = false
+    const itemId = action?.id ?? editing?.id
+    setCreating(null); setAction(null); setEditing(null); dialogPending.current = false
     requestAnimationFrame(() => {
       const target = itemId ? document.querySelector<HTMLElement>(`[data-asset-row="${itemId}"] button`) : null
       const fallback = document.querySelector<HTMLElement>('button[aria-label="添加连接"]')
@@ -165,28 +198,28 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
                   {asset.kind === 'connection' ? (
                     <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit}
                       onClick={() => updateView({ ...view, currentGroupId: asset.parentId })}
-                      onDoubleClick={() => onConnect({ assetId: asset.id, host: asset.host, port: asset.port, username: asset.username })}
+                      onDoubleClick={() => onConnect(asset)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
                           if (!event.repeat) {
                             updateView({ ...view, currentGroupId: asset.parentId })
-                            onConnect({ assetId: asset.id, host: asset.host, port: asset.port, username: asset.username })
+                            onConnect(asset)
                           }
                         }
                       }}
-                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `双击连接 · ${asset.name} · ${asset.username}@${asset.host}:${asset.port}`} aria-label={`连接 ${asset.name}`}>
+                      title={`${asset.username}@${asset.host}`} aria-label={`连接 ${asset.name}`}>
                       <ServerIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
                     </Button>
                   ) : asset.kind === 'local' ? (
                     <Button variant="ghost" className="w-full justify-start gap-2" disabled={atLimit} aria-label={`连接 ${asset.name}`}
-                      title={atLimit ? '终端数量已达上限，请先关闭一个标签' : `双击连接 · ${asset.name} · ${asset.directory}`}
+                      title={asset.directory}
                       onClick={() => updateView({ ...view, currentGroupId: asset.parentId })}
-                      onDoubleClick={() => onOpenLocal(asset.directory, asset.name)}
+                      onDoubleClick={() => onOpenLocal(asset.directory, asset.name, asset.id)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
-                          if (!event.repeat) { updateView({ ...view, currentGroupId: asset.parentId }); onOpenLocal(asset.directory, asset.name) }
+                          if (!event.repeat) { updateView({ ...view, currentGroupId: asset.parentId }); onOpenLocal(asset.directory, asset.name, asset.id) }
                         }
                       }}>
                       <TerminalIcon data-icon="inline-start" /><span className="truncate">{asset.name}</span>
@@ -202,12 +235,13 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
               <ContextMenuContent onCloseAutoFocus={(event) => { if (dialogPending.current) event.preventDefault() }} collisionPadding={8}>
                 {asset.kind === 'group' && <>
                   <ContextMenuGroup>
-                    <ContextMenuItem disabled={atAssetLimit} onSelect={() => startCreate('connection', null)}><PlusIcon />添加连接</ContextMenuItem>
+                    <ContextMenuItem disabled={atAssetLimit} onSelect={() => startCreate('connection', asset.id)}><PlusIcon />添加连接</ContextMenuItem>
                     <ContextMenuItem disabled={atAssetLimit || !canAddGroup(asset.id)} onSelect={() => startCreate('group', asset.id)}><FolderPlusIcon />添加子分组</ContextMenuItem>
                   </ContextMenuGroup>
                   <ContextMenuSeparator />
                 </>}
                 <ContextMenuGroup>
+                  {asset.kind !== 'group' && <ContextMenuItem onSelect={() => { dialogPending.current = true; setEditing(asset) }}><PencilIcon />编辑</ContextMenuItem>}
                   <ContextMenuItem onSelect={() => startAction({ type: 'rename', id: asset.id })}><PencilIcon />重命名</ContextMenuItem>
                   <ContextMenuItem onSelect={() => startAction({ type: 'move', id: asset.id })}><FolderInputIcon />移动到…</ContextMenuItem>
                 </ContextMenuGroup>
@@ -258,8 +292,9 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal }: {
       </nav>
       <p role="status" className="sr-only">{status}</p>
       {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} atLimit={atLimit} onSave={save} onClose={closeDialog} />}
+      {editing && <AssetEditDialog asset={editing} assets={assets} onSave={edit} onClose={closeDialog} />}
       {action && <AssetActionDialog action={action} assets={assets} onSave={async (next) => {
-        const removed = assets.filter((asset) => asset.kind === 'connection' && !next.some((item) => item.id === asset.id)).map((asset) => asset.id)
+        const removed = assets.flatMap((asset) => asset.kind === 'connection' && !next.some((item) => item.id === asset.id) ? [asset.credentialId ?? asset.id] : [])
         const failure = persist(next, view)
         if (failure) return failure
         if (removed.length) {

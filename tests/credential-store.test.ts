@@ -87,3 +87,20 @@ test('credential inputs reject traversal, malformed auth and oversized deletion 
   assert.throws(() => store.remove('valid'), /无效/)
   assert.deepEqual(readdirSync(directory), [])
 })
+
+test('a full asset vault reserves one bounded revision and retains the original until commit', (t) => {
+  const { store, directory } = fixture(t)
+  for (let index = 0; index < 500; index++) store.save(`server-${index}`, options)
+  const replacement: SshOptions = { ...options, auth: { method: 'password', password: 'replacement-secret' } }
+  store.save('revision', replacement)
+  assert.equal(readdirSync(directory).length, 501)
+  assert.deepEqual(store.load({ ...reference, assetId: 'server-0' }), options)
+  assert.deepEqual(store.load({ ...reference, assetId: 'revision' }), replacement)
+  assert.throws(() => store.save('extra-revision', replacement), /无法安全保存/)
+  store.remove(['revision'])
+  assert.deepEqual(store.load({ ...reference, assetId: 'server-0' }), options, 'Rolling back a revision leaves the old credentials usable')
+  store.save('revision-committed', replacement)
+  store.remove(['server-0'])
+  assert.equal(readdirSync(directory).length, 500)
+  assert.deepEqual(store.load({ ...reference, assetId: 'revision-committed' }), replacement)
+})

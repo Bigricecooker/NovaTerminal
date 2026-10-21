@@ -7,7 +7,8 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TerminalSession } from '@/components/terminal-session'
 import { AssetSidebar } from '@/components/asset-sidebar'
-import { MAX_SESSIONS, type SavedSshConnection } from '@shared/terminal-protocol'
+import { MAX_SESSIONS } from '@shared/terminal-protocol'
+import type { AssetConnection } from '@/lib/assets'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
 const TAB_DRAG = 'application/x-novaterminal-tab'
@@ -19,14 +20,15 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
   const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
   const atLimit = state.tabs.length >= MAX_SESSIONS
   const openLabel = atLimit ? `最多打开 ${MAX_SESSIONS} 个终端，请先关闭一个标签` : '新建本地终端'
-  const openSsh = (connection: SavedSshConnection) => {
+  const openSsh = (connection: AssetConnection) => {
     if (atLimit) return false
-    dispatch({ type: 'open', ssh: connection })
+    const { host, port, username } = connection
+    dispatch({ type: 'open', ssh: { host, port, username, assetId: connection.credentialId ?? connection.id }, name: connection.name, assetId: connection.id })
     return true
   }
-  const openLocal = (directory: string, name: string) => {
+  const openLocal = (directory: string, name: string, assetId?: string) => {
     if (atLimit) return false
-    dispatch({ type: 'open', local: { directory, name } })
+    dispatch({ type: 'open', local: { directory, name }, ...(assetId ? { assetId } : {}) })
     return true
   }
 
@@ -41,7 +43,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
         actionContainer,
       )}
       <div className="flex min-h-0 flex-1">
-        <AssetSidebar atLimit={atLimit} onConnect={openSsh} onOpenLocal={openLocal} />
+        <AssetSidebar atLimit={atLimit} onConnect={openSsh} onOpenLocal={openLocal} onAssetsChange={(assets) => dispatch({ type: 'sync-assets', assets })} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {state.tabs.length === 0 ? (
         <Empty className="min-h-0 flex-1" aria-label="终端工作区">
