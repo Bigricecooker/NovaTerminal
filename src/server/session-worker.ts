@@ -1,11 +1,12 @@
 import { homedir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { isAbsolute } from 'node:path'
 import { statSync } from 'node:fs'
 import { spawn, type IPty, type IDisposable } from 'node-pty'
 import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, parseClientMessage, type ServerMessage } from '../shared/terminal-protocol.ts'
 
 import { createKnownHosts, type KnownHosts } from './known-hosts.ts'
 import { createSshSession, type SshSession } from './ssh-session.ts'
+import { resolveLocalShell } from './local-shell.ts'
 
 export type WorkerTransport = {
   send: (message: ServerMessage, callback: (error: Error | null) => void) => void
@@ -76,16 +77,16 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
           try {
             if (!isAbsolute(cwd) || !statSync(cwd).isDirectory()) throw new Error('Invalid directory')
           } catch { fail('无法打开本地目录，请确认目录存在且有访问权限。'); return }
-          const shell = windows
-            ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-            : process.env.SHELL || '/bin/sh'
-          const terminal = spawn(shell, windows ? ['-NoLogo', '-NoProfile'] : ['-l'], {
+          let shell: ReturnType<typeof resolveLocalShell>
+          try { shell = resolveLocalShell(message.shell ?? 'default') }
+          catch (error) { fail(error instanceof Error ? error.message : 'Shell 不可用。'); return }
+          const terminal = spawn(shell.file, shell.args, {
             name: 'xterm-256color', cols: message.cols, rows: message.rows,
             cwd, env: { ...process.env, TERM: 'xterm-256color' },
             useConptyDll: windows,
           })
           pty = terminal
-          send({ type: 'ready', shell: windows ? 'PowerShell' : basename(shell) })
+          send({ type: 'ready', shell: shell.label })
           subscriptions = [
             terminal.onData((data) => {
               if (finished || ending) return

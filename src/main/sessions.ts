@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, parseServerMessage, type SavedSshConnection, type SshOptions } from '../shared/terminal-protocol.ts'
 import type { DesktopEvent } from '../shared/desktop-api.ts'
 import { desktopMessage, sessionId } from './security.ts'
+import { DEFAULT_SETTINGS, type Settings } from '../shared/settings.ts'
 
 export type SessionProcess = {
   postMessage: (message: unknown) => void
@@ -15,7 +16,7 @@ type Session = {
   inputAt: number; inputCount: number; timer: ReturnType<typeof setTimeout>
 }
 
-export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void, resolveSsh?: (reference: SavedSshConnection) => SshOptions) {
+export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void, resolveSsh?: (reference: SavedSshConnection) => SshOptions, preferences: () => Pick<Settings, 'maxSessions' | 'shell' | 'directory'> = () => DEFAULT_SETTINGS) {
   const sessions = new Map<string, Session>()
   const slots = new Set<string>()
   // Closing workers retain their slot until exit, including native resource teardown.
@@ -69,7 +70,7 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
   }
   return {
     open: (owner: number) => {
-      if (slots.size >= MAX_SESSIONS) throw new Error('Terminal session limit reached')
+      if (slots.size >= Math.max(1, Math.min(8, preferences().maxSessions || MAX_SESSIONS))) throw new Error('会话数量已达上限，或上个会话仍在清理，请稍后重试。')
       const id = randomUUID()
       slots.add(id)
       const current: Session = {
@@ -94,6 +95,11 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
             fail(id, '无法读取此连接的系统安全存储认证信息；请确认密钥库已解锁。旧连接或凭据失效时，请编辑连接并重新填写认证信息。')
             return false
           }
+        }
+        if (!message.ssh) {
+          const defaults = preferences()
+          const cwd = message.cwd ?? defaults.directory
+          message = { type: 'start', cols: message.cols, rows: message.rows, shell: defaults.shell, ...(cwd ? { cwd } : {}) }
         }
         current.started = true
         try { activate(id, current) }

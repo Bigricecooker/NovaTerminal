@@ -7,28 +7,28 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { TerminalSession } from '@/components/terminal-session'
 import { AssetSidebar } from '@/components/asset-sidebar'
-import { MAX_SESSIONS } from '@shared/terminal-protocol'
+import type { Settings } from '@shared/settings'
 import type { AssetConnection } from '@/lib/assets'
 import { initialTerminalTabs, terminalTabsReducer } from '@/lib/terminal-tabs'
 
 const TAB_DRAG = 'application/x-novaterminal-tab'
 
-export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; actionContainer: HTMLElement | null }) {
+export function TerminalWorkspace({ dark, settings, actionContainer }: { dark: boolean; settings: Settings; actionContainer: HTMLElement | null }) {
   const [state, dispatch] = useReducer(terminalTabsReducer, initialTerminalTabs)
   const dragging = useRef<string | null>(null)
   const activeBeforeDrag = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
-  const atLimit = state.tabs.length >= MAX_SESSIONS
-  const openLabel = atLimit ? `最多打开 ${MAX_SESSIONS} 个终端，请先关闭一个标签` : '新建本地终端'
+  const atLimit = state.tabs.length >= settings.maxSessions
+  const openLabel = atLimit ? `最多打开 ${settings.maxSessions} 个终端，请先关闭一个标签` : '新建本地终端'
   const openSsh = (connection: AssetConnection) => {
     if (atLimit) return false
     const { host, port, username } = connection
-    dispatch({ type: 'open', ssh: { host, port, username, assetId: connection.credentialId ?? connection.id }, name: connection.name, assetId: connection.id })
+    dispatch({ type: 'open', limit: settings.maxSessions, ssh: { host, port, username, assetId: connection.credentialId ?? connection.id }, name: connection.name, assetId: connection.id })
     return true
   }
   const openLocal = (directory: string, name: string, assetId?: string) => {
     if (atLimit) return false
-    dispatch({ type: 'open', local: { directory, name }, ...(assetId ? { assetId } : {}) })
+    dispatch({ type: 'open', limit: settings.maxSessions, local: { directory, name }, ...(assetId ? { assetId } : {}) })
     return true
   }
 
@@ -36,7 +36,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
     <>
       {actionContainer && createPortal(
         <>
-          <Button variant="ghost" size="icon" aria-label={openLabel} title={openLabel} disabled={atLimit} onClick={() => dispatch({ type: 'open' })}>
+          <Button variant="ghost" size="icon" aria-label={openLabel} title={openLabel} disabled={atLimit} onClick={() => dispatch({ type: 'open', limit: settings.maxSessions })}>
             <TerminalIcon />
           </Button>
         </>,
@@ -108,7 +108,7 @@ export function TerminalWorkspace({ dark, actionContainer }: { dark: boolean; ac
           {state.tabs.map((tab) => (
             // Keep background xterm instances and sessions alive; only closing removes them.
             <TabsContent key={tab.id} value={tab.id} forceMount className="min-h-0 data-[state=active]:flex data-[state=inactive]:hidden">
-              <TerminalSession dark={dark} active={state.activeId === tab.id} label={tab.label} target={tab.target} />
+              <TerminalSession dark={dark} settings={settings} active={state.activeId === tab.id} label={tab.label} target={tab.target} />
             </TabsContent>
           ))}
         </Tabs>

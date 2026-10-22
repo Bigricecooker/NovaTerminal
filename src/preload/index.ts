@@ -1,6 +1,24 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, type DesktopCredentialApi, type DesktopDirectoryApi, type DesktopEvent, type DesktopTerminalApi, type DesktopWindowApi, type WindowState } from '../shared/desktop-api.ts'
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
+import { SETTINGS_CHANNELS, type DesktopSettingsApi } from '../shared/desktop-api.ts'
+import type { SettingsSnapshot } from '../shared/settings.ts'
+
+function publicFailure(error: unknown, fallback: string): never {
+  const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : ''
+  // Known validation messages are localized; filesystem / IPC details stay out of the UI.
+  throw new Error(/^[\u4e00-\u9fff]/.test(message) ? message : fallback)
+}
+const settingsApi: DesktopSettingsApi = {
+  initial: ipcRenderer.sendSync(SETTINGS_CHANNELS.initial),
+  save: (values) => ipcRenderer.invoke(SETTINGS_CHANNELS.save, JSON.stringify(values)).catch((error: unknown) => publicFailure(error, '设置保存失败，请重试。')),
+  onChange: (listener) => {
+    const handler = (_event: IpcRendererEvent, snapshot: SettingsSnapshot) => listener(snapshot)
+    ipcRenderer.on(SETTINGS_CHANNELS.event, handler)
+    return () => { ipcRenderer.removeListener(SETTINGS_CHANNELS.event, handler) }
+  },
+}
+contextBridge.exposeInMainWorld('novaSettings', settingsApi)
 
 const pending = new Map<string, number>()
 const api: DesktopTerminalApi = {

@@ -3,7 +3,7 @@ import { MAX_SESSIONS, type SavedSshConnection } from '../../../shared/terminal-
 export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & SavedSshConnection)
 type TerminalTab = { id: string; label: string; target: TerminalTarget; assetId?: string }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
-type TabAction = { type: 'open'; ssh?: SavedSshConnection; name?: string; assetId?: string; local?: { directory: string; name: string } }
+type TabAction = { type: 'open'; limit?: number; ssh?: SavedSshConnection; name?: string; assetId?: string; local?: { directory: string; name: string } }
   | { type: 'sync-assets'; assets: { id: string; name: string }[] }
   | { type: 'select' | 'close'; id: string }
   | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
@@ -13,7 +13,7 @@ export const initialTerminalTabs: TerminalTabs = { tabs: [], activeId: null, nex
 export function terminalTabsReducer(state: TerminalTabs, action: TabAction): TerminalTabs {
   switch (action.type) {
     case 'open': {
-      if (state.tabs.length >= MAX_SESSIONS) return state
+      if (state.tabs.length >= Math.max(1, Math.min(8, action.limit ?? MAX_SESSIONS))) return state
       const tab: TerminalTab = action.ssh
         ? { id: `ssh-${state.nextId}`, label: action.name ?? `${action.ssh.username}@${action.ssh.host}`, target: { kind: 'ssh', ...action.ssh } }
         : { id: `local-${state.nextId}`, label: action.local?.name ?? `本地终端 ${state.nextId}`, target: { kind: 'local', ...(action.local ? { cwd: action.local.directory } : {}) } }

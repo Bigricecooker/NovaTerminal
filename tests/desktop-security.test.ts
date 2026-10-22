@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import { APP_URL, DEV_URL, assetPath, desktopMessage, trustedFrame, windowAction } from '../src/main/security.ts'
 import { createDesktopSessions, type SessionProcess } from '../src/main/sessions.ts'
 import type { DesktopEvent } from '../src/shared/desktop-api.ts'
+import { DEFAULT_SETTINGS } from '../src/shared/settings.ts'
 
 test('desktop IPC requires the owning main frame and exact document URL', () => {
   assert.ok(trustedFrame(10, 10, true, APP_URL, APP_URL))
@@ -38,6 +39,27 @@ class FakeProcess extends EventEmitter implements SessionProcess {
   postMessage(message: unknown) { this.sent.push(message) }
   kill() { this.emit('exit', 0); return true }
 }
+
+test('main process applies current shell defaults and retains capacity during cleanup after lowering the limit', () => {
+  const children: FakeProcess[] = []
+  let preferences = { ...DEFAULT_SETTINGS, maxSessions: 2, directory: 'C:\\default' }
+  const sessions = createDesktopSessions(() => { const child = new FakeProcess(); children.push(child); return child }, () => {}, undefined, () => preferences)
+  try {
+    const first = sessions.open(1), second = sessions.open(1)
+    sessions.send(1, first, JSON.stringify({ type: 'start', cols: 80, rows: 24, shell: 'bash' }))
+    assert.deepEqual(children[0]?.sent[0], { type: 'start', cols: 80, rows: 24, shell: 'default', cwd: 'C:\\default' })
+    preferences = { ...preferences, maxSessions: 1, shell: 'cmd' }
+    sessions.send(1, second, JSON.stringify({ type: 'start', cols: 80, rows: 24, cwd: 'C:\\asset' }))
+    assert.deepEqual(children[1]?.sent[0], { type: 'start', cols: 80, rows: 24, shell: 'cmd', cwd: 'C:\\asset' })
+    assert.equal(sessions.count(), 2)
+    assert.throws(() => sessions.open(1), /上限/)
+    sessions.close(1, first); sessions.close(1, second)
+    children[0]?.kill()
+    assert.throws(() => sessions.open(1), /上限/)
+    children[1]?.kill()
+    assert.ok(sessions.open(1))
+  } finally { sessions.dispose(); for (const child of children) child.kill() }
+})
 
 test('saved SSH credentials resolve after ownership checks and never return to the renderer', () => {
   let lookups = 0
@@ -82,7 +104,7 @@ test('desktop sessions enforce ownership, limits, acknowledgements and isolated 
     assert.equal(sessions.count(), 1)
     assert.equal(events.at(-1)?.owner, 1)
     sessions.open(2); sessions.open(2)
-    assert.throws(() => sessions.open(2), /limit/)
+    assert.throws(() => sessions.open(2), /上限/)
     children[0]?.emit('exit', 0)
     const replacement = sessions.open(1)
     sessions.closeOwner(1)

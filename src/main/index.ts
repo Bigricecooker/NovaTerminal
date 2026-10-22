@@ -1,11 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, utilityProcess } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS } from '../shared/desktop-api.ts'
 import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
+import { createSettingsStore } from './settings-store.ts'
+import type { Platform, SettingsSnapshot } from '../shared/settings.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 app.setName('NovaTerminal')
@@ -14,6 +16,15 @@ const rendererUrl = dev ? DEV_URL : APP_URL
 let window: BrowserWindow | null = null
 let quitting = false
 let pickingDirectory = false
+const platform: Platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
+let settings: ReturnType<typeof createSettingsStore>
+function settingsSnapshot(): SettingsSnapshot {
+  const values = settings.get()
+  return { values, platform, warning: settings.warning(), dark: values.theme === 'dark' || values.theme === 'system' && nativeTheme.shouldUseDarkColors }
+}
+function publishSettings() {
+  if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(SETTINGS_CHANNELS.event, settingsSnapshot())
+}
 const credentialStore = () => createCredentialStore(join(app.getPath('userData'), 'ssh-credentials', dev ? 'development' : 'desktop'), {
   available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || !['basic_text', 'unknown'].includes(safeStorage.getSelectedStorageBackend())),
   encrypt: (value) => safeStorage.encryptString(value), decrypt: (value) => safeStorage.decryptString(value),
@@ -26,9 +37,9 @@ const sessions = createDesktopSessions(
     }
   },
   (reference) => credentialStore().load(reference),
+  () => settings.get(),
 )
-
-function authorize(event: Electron.IpcMainInvokeEvent): number {
+function authorize(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): number {
   if (!window || window.isDestroyed() || !event.senderFrame
     || !trustedFrame(event.sender.id, window.webContents.id, event.senderFrame === event.sender.mainFrame, event.senderFrame.url, rendererUrl)) {
     throw new Error('Untrusted terminal request')
@@ -39,7 +50,7 @@ function authorize(event: Electron.IpcMainInvokeEvent): number {
 async function createWindow() {
   const current = new BrowserWindow({
     title: 'NovaTerminal', width: 1200, height: 800, minWidth: 720, minHeight: 480, show: false,
-    backgroundColor: '#ffffff', frame: false,
+    backgroundColor: settingsSnapshot().dark ? '#171717' : '#ffffff', frame: false,
     webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true },
   })
   window = current
@@ -68,6 +79,18 @@ async function createWindow() {
 
 void app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
+  settings = createSettingsStore(join(app.getPath('userData'), 'settings', dev ? 'development.json' : 'desktop.json'), platform)
+  ipcMain.on(SETTINGS_CHANNELS.initial, (event) => {
+    try { authorize(event); event.returnValue = settingsSnapshot() } catch { event.returnValue = null }
+  })
+  ipcMain.handle(SETTINGS_CHANNELS.save, (event, raw: unknown) => {
+    authorize(event)
+    if (typeof raw !== 'string' || raw.length > 65_536) throw new Error('设置格式无效。')
+    settings.save(JSON.parse(raw))
+    publishSettings()
+    return settingsSnapshot()
+  })
+  nativeTheme.on('updated', publishSettings)
   const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'"
   protocol.handle('app', async (request) => {
     const file = assetPath(join(__dirname, '../../dist'), request.url)

@@ -1,5 +1,12 @@
 import type { ClientMessage, ServerMessage, SshOptions } from './terminal-protocol.ts'
+import type { Settings, SettingsSnapshot } from './settings.ts'
 
+export const SETTINGS_CHANNELS = { initial: 'settings:initial', save: 'settings:save', event: 'settings:event' } as const
+export type DesktopSettingsApi = {
+  initial: SettingsSnapshot
+  save: (values: Settings) => Promise<SettingsSnapshot>
+  onChange: (listener: (snapshot: SettingsSnapshot) => void) => () => void
+}
 export type DesktopEvent = { id: string; message: ServerMessage } | { id: string; closed: true }
 
 export type DesktopTerminalApi = {
@@ -30,5 +37,5 @@ export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credentia
 export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void> }
 
 declare global {
-  interface Window { novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
+  interface Window { novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
 }

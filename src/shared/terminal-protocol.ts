@@ -1,3 +1,4 @@
+import { isShell, type Shell } from './settings.ts'
 export const MAX_SESSIONS = 4
 export const MAX_INPUT = 16_384
 export const MAX_BUFFER = 1_048_576
@@ -18,7 +19,7 @@ export function credentialId(value: unknown): value is string {
 }
 
 export type ClientMessage =
-  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; savedSsh?: SavedSshConnection; cwd?: string }
+  | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; savedSsh?: SavedSshConnection; cwd?: string; shell?: Shell }
   | { type: 'host-key-response'; fingerprint: string; accept: boolean }
   | { type: 'input'; data: string }
   | { type: 'resize'; cols: number; rows: number }
@@ -88,16 +89,18 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (!dimension(value.cols, 500) || !dimension(value.rows, 300)) return null
       if (value.savedSsh !== undefined) {
         const endpoint = parseSshEndpoint(value.savedSsh)
-        if (value.ssh !== undefined || value.cwd !== undefined || !endpoint
+        if (value.ssh !== undefined || value.cwd !== undefined || value.shell !== undefined || !endpoint
           || !isRecord(value.savedSsh) || !credentialId(value.savedSsh.assetId)) return null
         return { type: 'start', cols: value.cols, rows: value.rows, savedSsh: { ...endpoint, assetId: value.savedSsh.assetId } }
       }
       if (value.ssh === undefined) {
-        if (value.cwd === undefined) return { type: 'start', cols: value.cols, rows: value.rows }
+        if (value.shell !== undefined && !isShell(value.shell)) return null
+        const shell = isShell(value.shell) ? { shell: value.shell } : {}
+        if (value.cwd === undefined) return { type: 'start', cols: value.cols, rows: value.rows, ...shell }
         const cwd = parseLocalDirectory(value.cwd)
-        return cwd ? { type: 'start', cols: value.cols, rows: value.rows, cwd } : null
+        return cwd ? { type: 'start', cols: value.cols, rows: value.rows, cwd, ...shell } : null
       }
-      if (value.cwd !== undefined) return null
+      if (value.cwd !== undefined || value.shell !== undefined) return null
       const ssh = parseSshOptions(value.ssh)
       return ssh ? { type: 'start', cols: value.cols, rows: value.rows, ssh } : null
     }

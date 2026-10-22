@@ -10,6 +10,7 @@ import { SSH_START_TIMEOUT, type ClientMessage, type ServerMessage } from '@shar
 import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
+import { FONT_STACKS, type Settings } from '@shared/settings'
 
 type Phase = 'connecting' | 'verifying' | 'running' | 'closed' | 'error'
 type Session = { phase: Phase; detail: string; shell: string }
@@ -35,8 +36,8 @@ function terminalTheme(): ITheme {
   }
 }
 
-export function TerminalSession({ dark, active, label, target }: {
-  dark: boolean; active: boolean; label: string; target: TerminalTarget
+export function TerminalSession({ dark, settings, active, label, target }: {
+  dark: boolean; settings: Settings; active: boolean; label: string; target: TerminalTarget
 }) {
   const container = useRef<HTMLDivElement>(null)
   const controls = useRef<Controls | null>(null)
@@ -136,7 +137,7 @@ export function TerminalSession({ dark, active, label, target }: {
           setHostKey(null)
           setSession({ phase: 'running', detail: target.kind === 'ssh' ? `SSH · ${target.host}:${target.port}` : target.cwd ?? '本地会话', shell: message.shell })
           fitTerminal()
-          if (activeRef.current) terminal.focus()
+          if (activeRef.current && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) terminal.focus()
           break
         case 'output':
           // Confirm UTF-16 code units only after xterm has consumed the chunk.
@@ -186,6 +187,19 @@ export function TerminalSession({ dark, active, label, target }: {
     })
     return () => cancelAnimationFrame(frame)
   }, [active])
+
+  useEffect(() => {
+    if (controls.current) {
+      const terminal = controls.current.terminal
+      terminal.options.fontFamily = FONT_STACKS[settings.fontFamily]
+      terminal.options.fontSize = settings.fontSize
+      terminal.options.lineHeight = settings.lineHeight
+      terminal.options.scrollback = settings.scrollback
+      terminal.options.cursorStyle = settings.cursorStyle
+      terminal.options.cursorBlink = settings.cursorBlink
+      controls.current.fit()
+    }
+  }, [settings])
 
   useEffect(() => {
     // App updates the root theme before paint; defer reading CSS tokens one frame.
