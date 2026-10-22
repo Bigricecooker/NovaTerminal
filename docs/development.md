@@ -14,7 +14,7 @@
 npm run dev
 ```
 
-该命令编译主进程、preload 和会话进程，在 `127.0.0.1:5180` 启动 Vite 页面，再打开 Electron。前端支持热更新，开发期按 F12 或 Windows / Linux 的 Ctrl+Shift+I、macOS 的 Cmd+Alt+I 切换 DevTools；修改 `src/main/`、`src/preload/` 或会话服务后重启命令。启动器退出时请求应用清理会话并关闭自己创建的 Vite 服务。开发与正式模式均通过 preload / IPC 访问会话，不提供独立浏览器模式或终端 WebSocket 服务。
+该命令编译主进程、preload 和会话进程，在 `127.0.0.1:5180` 启动 Vite 页面，再打开 Electron。前端支持热更新，开发期按 F12 或 Windows / Linux 的 Ctrl+Shift+I、macOS 的 Cmd+Alt+I 切换 DevTools；修改 `src/main/`、`src/preload/` 或会话服务后重启命令。启动器收到退出信号时请求应用退出，保留 Vite 直至应用结束；用户取消后允许再次请求，不用固定超时强杀正在等待确认的应用。开发与正式模式均通过 preload / IPC 访问会话，不提供独立浏览器模式或终端 WebSocket 服务。
 
 Windows 桌面启动使用 `windowsHide: false`。将 GUI 进程以隐藏方式启动，可能使首次 `BrowserWindow.show()` 后窗口仍不可见，即使页面已加载且进程正常运行。桌面冒烟测试同时检查窗口可见和未最小化，不能仅以进程存在或页面可截图作为显示成功的依据。启动器打印开发地址与桌面启动提示，异常启动或退出会显示错误。
 
@@ -29,7 +29,7 @@ npm run test:package
 
 打包使用 ASAR，原生 `.node` 文件和 `node-pty` 所需的 ConPTY DLL / 辅助程序保留在解包目录。当前锁定的 `node-pty` 使用 N-API；升级 Electron、原生依赖或切换平台后必须验证桌面原生模块加载和独立 exe 终端，不以系统 Node.js 测试代替。
 
-`test:package` 将完整目录复制到独立临时位置，使用空白用户数据目录、去除系统 Node.js 的 PATH，启动真实 exe。仅测试启动参数开启回环调试端口，测试结束后关闭程序并清理临时目录；普通启动不开启该端口。测试检查包内页面、preload、本地命令、主题及 Shell 随应用退出。
+`test:package` 将完整目录复制到独立临时位置，通过 `--user-data-dir` 显式指定隔离目录，预置字号哨兵并断言初始快照，去除系统 Node.js 的 PATH 后启动真实 exe。仅修改 APPDATA 不能证明 Electron 的用户数据隔离。测试启动参数开启回环调试端口，测试结束后关闭程序并清理临时目录；普通启动不开启该端口。测试检查包内页面、preload、本地命令、设置读取 / 保存、主题、退出取消 / 重试及 Shell 随应用退出；随后重启独立 exe，检查外观和会话偏好恢复，再损坏隔离配置后启动，检查默认值、警告与原始损坏文件备份。
 
 ## 代码组织
 
@@ -53,7 +53,13 @@ npm run test:package
 | `src/main/credential-store.ts` | 有界加密凭据存储、端点绑定及删除，系统保护能力由主进程注入 |
 | `src/renderer/src/components/ui/` | 由官方 CLI 引入的 shadcn/ui 组件 |
 | `src/shared/terminal-protocol.ts` | 共享消息类型、参数校验和资源限额 |
-| `src/renderer/src/lib/terminal-tabs.ts`、`src/renderer/src/lib/assets.ts` | 标签与资产模型 |
+| `src/renderer/src/lib/terminal-tabs.ts`、`src/shared/assets.ts` | 标签与共享资产模型；原 renderer 资产文件保留兼容导出 |
+| `src/shared/settings.ts`、`src/main/settings-store.ts` | 设置字段 / 平台校验、默认值、持久化与损坏恢复 |
+| `src/server/local-shell.ts` | 平台 Shell 白名单与实际路径解析 |
+| `src/main/exit-coordinator.ts` | 退出请求去重、界面应答超时和取消 |
+| `src/shared/connection-transfer.ts` | 公开配置导出、导入校验和预览合并 |
+| `src/shared/terminal-interactions.ts` | 快捷键 / IME 守卫、剪贴板上限及外链校验 |
+| `src/renderer/src/components/settings-dialog.tsx`、`terminal-search.tsx` | 设置草稿表单与每标签搜索 |
 | `src/main/index.ts`、`src/preload/index.ts` | 桌面窗口、本地资源协议和受限桥接 |
 | `src/main/security.ts`、`src/main/sessions.ts` | IPC 来源 / 参数 / 归属校验、会话限额与清理 |
 | `src/server/session-worker.ts` | 独立进程持有本地 PTY 或 SSH 会话，共用协议及背压 |
@@ -65,13 +71,27 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
                                 └─ 每会话 utility process ⇄ node-pty / ssh2
 ```
 
-前端不能指定本机可执行文件、参数或工作目录。会话服务只接受约定的协议消息，不提供通用文件访问或命令执行 API。
+前端不能指定本机可执行文件或参数。设置只接受平台 Shell 枚举，本地连接只接受有界绝对工作目录；主进程按保存设置选取 Shell，会话进程验证目录与 Shell 是否可用。会话服务只接受约定的协议消息，不提供通用文件访问或独立命令执行 API。
 
 后台终端保持挂载并继续消费输出。xterm 消费数据后按 UTF-16 单元确认，服务通过高低水位暂停和恢复流；未确认输出、Socket / IPC 缓冲及输入均受限制。具体阈值以共享协议和会话实现为准。
 
 粘贴输入使用共享分块函数，在协议长度限制内保留完整 UTF-16 代理对，避免 PTY / SSH 分别编码各块时破坏 emoji。主机指纹先写入同目录临时文件，再以硬链接原子发布完整记录；跨会话 / 进程同时确认相同指纹可成功，竞争中的不同指纹或异常记录继续拒绝。文件系统不支持硬链接时阻止首次信任，不退回可能覆盖旧记录的写法；异常中止可能留下仅含公开主机信息的 `.tmp` 文件，它们不会作为信任记录读取。
 
 桌面会话属于创建它的窗口；刷新、渲染进程退出或关闭窗口会清理所属会话。应用正常退出时先请求会话进程关闭，再限时等待退出；关闭中的进程在退出前仍占用资源名额。修改这些行为时需运行生命周期回归测试。
+
+## 设置与终端生命周期
+
+设置存储使用用户数据目录 `settings/desktop.json` 或开发模式的 `settings/development.json`，格式为 `{version:1,values:{…}}`，读取上限 64 KiB。共享解析器填补缺失字段、剥离未知字段并拒绝无效值。写入同目录临时文件、fsync、rename 成功后才替换内存；损坏文件尝试重命名隔离并提示，首次缺文件正常使用默认值。preload 同步获取受来源校验的初始快照，React 挂载前应用主题，后续通过订阅接收设置和系统主题变化。
+
+外观更新修改已有 xterm options 并重新适配尺寸，不重建会话。Shell / 默认目录用于新建；显式本地资产目录优先。上限默认 4、范围 1–8，renderer 对所有保留标签计数，主进程对待启动、运行和正在关闭的资源计数。降低上限不清理存量，回收未完成可能暂时拒绝新建。
+
+退出入口统一交给 `exit-coordinator`，请求带递增编号。界面有活动会话时确认，无活动会话直接应答退出；取消之前不清理资源。主进程每秒探测一次，5 秒内没有界面 ACK 才按失联处理，不限制用户考虑时长。陈旧编号忽略；渲染崩溃、刷新、系统关机或进程强杀不承诺确认。标签显式重连递增 generation，沿用标签 ID、清空旧输出；SSH 重新读取当前认证引用，端点变更或资产已删除拒绝重连，不重放输入。
+
+剪贴板通过受限主进程 API 读写；输入先检查 65,536 个 UTF-16 单元限制，再由 `terminal.paste` 保留 bracketed paste 语义。超限只提示。复制上限 1,048,576 个单元；选中即复制在鼠标释放 / 键盘选择稳定后执行。多行确认不显示内容，销毁时取消待处理粘贴。清屏先清除搜索装饰与选区，再调用 `terminal.clear()`，避免不可见选区拦截下一次 Ctrl+C。
+
+搜索使用锁定版本的 SearchAddon，每标签保存当前搜索状态。保持 xterm proposed API 关闭，仅用稳定选区突出当前匹配；空查询和关闭清除选区。WebLinksAddon 与 OSC 8 共用 URL 验证，只有 http/https 可调用受限 `shell.openExternal`。右键、终端鼠标报告修饰键及合成输入由 UI 入口检查。
+
+导入 / 导出只经系统文件对话框，renderer 无法提交文件路径。主进程最多读取 1 MiB，校验公开格式；合并预览再次校验最终资产文档，确认时检查资产未变化，持久化成功后才更新 UI。同路径同名分组合并，连接保留，新增条目生成 ID；缺失父分组归顶层。导入 SSH 标记 `needsAuthentication`，编辑保存新认证后移除；不读取或导入文件中的认证及引用。导出通过白名单构造公共字段并原子替换用户选定文件。
 
 ## UI 维护
 
@@ -101,6 +121,8 @@ npm test
 npm run build
 npm run test:desktop
 npm run test:sidebar
+npm run test:p0
+npm run test:acceptance
 ```
 
 | 测试文件 | 主要覆盖 |
@@ -116,6 +138,8 @@ npm run test:sidebar
 | `tests/known-hosts.test.ts` | 独立存储实例并发确认、不同指纹竞争、损坏记录与后续写入恢复 |
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK 和隔离清理 |
+| `tests/settings.test.ts` | 设置边界、默认值、持久化 / 损坏隔离、保存失败及 Shell 不可用 |
+| `tests/p0-interactions.test.ts` | 退出应答状态机、快捷键 / IME 守卫、URL 白名单、导入导出与重连标签 |
 
 `test:desktop` 启动真实 Electron，检查窗口可见性、统一顶栏 / 拖动区域样式、鼠标输入触发最小化 / 最大化 / 还原 / 关闭、外部窗口状态变化同步、深浅主题、沙箱配置、preload、本地 PTY、命令输入、多标签、窗口尺寸、SSH 首次指纹确认、密码认证、跨分块 emoji 粘贴，以及本地目录选择 IPC、取消 / 保存失败、指定目录启动、再次打开 / 资产恢复及退出清理。目录选择测试仅在测试主进程替换系统弹窗返回值，仍经过正式 IPC / preload / utility process；原生选择器的人工操作需另验。开发页面模式可用 `node scripts/test-desktop.mjs --dev` 验证；包内 ASAR 可用 `node scripts/test-desktop.mjs release/NovaTerminal-win32-x64/resources/app.asar/out/electron/main.cjs` 验证。ASAR 检查复用开发 Electron，不替代独立 exe 的 `test:package`。
 
@@ -124,6 +148,12 @@ npm run test:sidebar
 `test:sidebar` 在独立临时配置中验证默认折叠、工具栏 / 分组菜单新增范围、SSH 编辑预填与端点认证校验、编辑刷新恢复、本地目录编辑和运行中标签名称同步、搜索恢复、资产真实鼠标拖拽、非法循环阻止、菜单边界、重命名、移动 / 删除对话框、存储失败和运行中会话标签移动。`test:desktop` 另验证真实 SSH 编辑后仍可免填重连、认证替换及安全存储 / 公开配置失败回滚。鼠标发起原生拖拽后，使用 Electron 调试协议接收拖拽数据并交付进入 / 悬停 / 放下事件；不读取个人资产。开发页面可用 `node scripts/test-desktop.mjs --sidebar --dev` 验证。
 
 当前没有持续集成。自动化测试不能替代系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
+
+`test:p0` 使用真实 Electron / PTY、Electron 键鼠输入和系统文本剪贴板，检查设置取消 / 保存、系统主题事件、720×480 布局、已有终端字号、动态上限、快捷键、搜索、复制、超限粘贴、多行取消、显式重连、导入回滚 / 导出及退出去重 / 取消。文件对话框返回值和外部浏览器调用使用测试替身；系统主题通过 Electron nativeTheme 模拟。可加 `--dev` 或指定 ASAR 入口重跑 `scripts/test-desktop.mjs --p0`。
+
+`test:acceptance` 补充 Windows 专项交互：通过 Electron `sendInputEvent` 拖选并检查只在松开时复制；使用真实 PowerShell 长命令检查有选区 Ctrl+C 复制、清屏后无选区 Ctrl+C 中断；通过右键菜单粘贴中文 / emoji；检查搜索前后跳转、大小写、正则及表单快捷键隔离；点击实际渲染链接并验证鼠标报告模式下需 Ctrl 修饰键；检查 cmd 命令执行、PowerShell 7 不可用及失效目录不回退。链接点击测试替换 `shell.openExternal`，不默认启动浏览器。可加 `--dev` 或 ASAR 入口重跑 `scripts/test-desktop.mjs --acceptance`。测试读写并恢复系统文本剪贴板，不保证恢复图片等其他剪贴板格式。
+
+显式设置 `NOVA_ACCEPT_BROWSER=1` 时，专项验收通过正式外链 IPC 启动系统默认浏览器，检查临时回环页面收到请求；测试结束关闭服务，浏览器标签需单独关闭。设置 `NOVA_ACCEPT_WSL=1` 时，记录默认 WSL 的启动与命令输出，记录仅供判读，不自动计为验收通过。测试结果写入 `test-results/p0-acceptance.json`。真实输入法候选确认、原生选择器、操作系统主题切换、外部编辑器粘贴、WSL / 可选 Shell 的环境兼容性及其他平台仍需专项验证；IME 守卫单元测试不能代替真实输入法测试。
 
 ## 桌面交互测试
 
