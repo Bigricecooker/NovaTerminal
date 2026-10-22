@@ -37,7 +37,7 @@ export function AssetEditDialog({ asset, assets, onSave, onClose }: {
       if (text('authMethod') !== 'keep') {
         options = sshOptionsFromForm(data) ?? undefined
         if (!options) { setError('请检查密码或私钥认证信息。'); return }
-      } else if (endpoint.host !== asset.host || endpoint.port !== asset.port || endpoint.username !== asset.username) {
+      } else if (asset.needsAuthentication || endpoint.host !== asset.host || endpoint.port !== asset.port || endpoint.username !== asset.username) {
         setError('修改主机、端口或用户名后，请重新填写密码或私钥。'); return
       }
       draft = { ...base, kind: 'connection', ...endpoint }
@@ -70,7 +70,7 @@ export function AssetEditDialog({ asset, assets, onSave, onClose }: {
                 {groupOptions(assets).map((group) => <NativeSelectOption key={group.id} value={group.id}>{group.label}</NativeSelectOption>)}
               </NativeSelect>
             </Field>
-            {asset.kind === 'connection' ? <SshConnectionFields endpoint={asset} allowKeepAuth /> : <Field>
+            {asset.kind === 'connection' ? <SshConnectionFields endpoint={asset} allowKeepAuth={!asset.needsAuthentication} /> : <Field>
               <FieldLabel htmlFor={`${id}-directory`}>起始目录</FieldLabel>
               <Input id={`${id}-directory`} name="directory" defaultValue={asset.directory} required maxLength={4096} spellCheck={false} />
             </Field>}

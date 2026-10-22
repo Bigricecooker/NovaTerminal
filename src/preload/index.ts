@@ -7,12 +7,20 @@ import { CLIPBOARD_CHANNELS, type DesktopClipboardApi } from '../shared/desktop-
 import { MAX_COPY } from '../shared/terminal-interactions.ts'
 import { EXIT_CHANNELS, type DesktopExitApi } from '../shared/desktop-api.ts'
 import { LINK_CHANNEL, type DesktopLinkApi } from '../shared/desktop-api.ts'
+import { TRANSFER_CHANNELS, type DesktopTransferApi } from '../shared/desktop-api.ts'
 
 function publicFailure(error: unknown, fallback: string): never {
   const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : ''
   // Known validation messages are localized; filesystem / IPC details stay out of the UI.
   throw new Error(/^[\u4e00-\u9fff]/.test(message) ? message : fallback)
 }
+const transferApi: DesktopTransferApi = {
+  read: () => ipcRenderer.invoke(TRANSFER_CHANNELS.read).catch((error: unknown) => publicFailure(error, '无法读取连接配置文件，请检查文件权限后重试。')),
+  write: (document) => typeof document === 'string' && document.length <= 1_048_576
+    ? ipcRenderer.invoke(TRANSFER_CHANNELS.write, document).catch((error: unknown) => publicFailure(error, '连接配置导出失败，请重试。')) : Promise.reject(new Error('导出配置过大。')),
+}
+contextBridge.exposeInMainWorld('novaConnections', transferApi)
+
 const linksApi: DesktopLinkApi = { open: (url) => ipcRenderer.invoke(LINK_CHANNEL, url) }
 contextBridge.exposeInMainWorld('novaLinks', linksApi)
 

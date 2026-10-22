@@ -5,7 +5,7 @@ export const MAX_ASSETS = 500
 export const MAX_GROUP_DEPTH = 8
 const MAX_DOCUMENT_SIZE = 524_288
 export type AssetGroup = { kind: 'group'; id: string; name: string; parentId: string | null }
-export type AssetConnection = { kind: 'connection'; id: string; name: string; parentId: string | null; credentialId?: string } & SshEndpoint
+export type AssetConnection = { kind: 'connection'; id: string; name: string; parentId: string | null; credentialId?: string; needsAuthentication?: boolean } & SshEndpoint
 export type AssetLocalConnection = { kind: 'local'; id: string; name: string; parentId: string | null; directory: string }
 export type Asset = AssetGroup | AssetConnection | AssetLocalConnection
 export type AssetDraft = Omit<AssetGroup, 'id'> | Omit<AssetConnection, 'id'> | Omit<AssetLocalConnection, 'id'>
@@ -36,8 +36,9 @@ export function parseAssetDocument(value: unknown): Asset[] | null {
     if (item.kind === 'group') assets.push({ ...base, kind: 'group' })
     else if (item.kind === 'connection') {
       const endpoint = parseSshEndpoint(item)
-      if (!endpoint || item.credentialId !== undefined && !validId(item.credentialId)) return null
-      assets.push({ ...base, kind: 'connection', ...endpoint, ...(item.credentialId !== undefined ? { credentialId: item.credentialId } : {}) })
+      if (!endpoint || item.credentialId !== undefined && !validId(item.credentialId)
+        || item.needsAuthentication !== undefined && typeof item.needsAuthentication !== 'boolean') return null
+      assets.push({ ...base, kind: 'connection', ...endpoint, ...(item.credentialId !== undefined ? { credentialId: item.credentialId } : {}), ...(item.needsAuthentication ? { needsAuthentication: true } : {}) })
     } else if (item.kind === 'local') {
       const directory = parseLocalDirectory(item.directory)
       if (!directory) return null

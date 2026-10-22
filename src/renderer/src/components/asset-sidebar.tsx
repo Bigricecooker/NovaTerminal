@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type DragEvent } from 'react'
-import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TerminalIcon, TrashIcon, XIcon } from 'lucide-react'
+import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TerminalIcon, TrashIcon, XIcon, DownloadIcon, UploadIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { AssetCreateDialog } from '@/components/asset-create-dialog'
 import { AssetEditDialog } from '@/components/asset-edit-dialog'
@@ -12,6 +12,8 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { Separator } from '@/components/ui/separator'
 import { MAX_ASSETS, MAX_GROUP_DEPTH, appendAsset, assetTree, editConnection, groupOptions, initialAssetView, loadAssetWorkspace, moveAsset, normalizeAssetView, saveAssetWorkspace, viewAfterAppend, type Asset, type AssetConnection, type AssetDraft, type AssetNode, type AssetView, type ConnectionAsset, type ConnectionDraft } from '@/lib/assets'
 import { parseLocalDirectory, type SshOptions } from '@shared/terminal-protocol'
+import { mergeConnections, type ImportPreview } from '@shared/connection-transfer'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 
 const ASSET_DRAG = 'application/x-novaterminal-asset'
 
@@ -29,6 +31,10 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
   const [searchCollapsed, setSearchCollapsed] = useState(new Set<string>())
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
+  const [transferBusy, setTransferBusy] = useState(false)
+  const [preview, setPreview] = useState<{ data: ImportPreview; original: Asset[] } | null>(null)
+  const [importError, setImportError] = useState('')
+  const transferPending = useRef(false)
   const [creating, setCreating] = useState<{ kind: 'group' | 'connection'; parentId: string | null } | null>(null)
   const [picking, setPicking] = useState(false)
   const pickerPending = useRef(false)
@@ -53,6 +59,24 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
     onAssetsChange(next)
     setError('')
     return null
+  }
+  const transfer = async (kind: 'import' | 'export') => {
+    if (initial.error || transferPending.current) return
+    transferPending.current = true; setTransferBusy(true); setError('')
+    try {
+      if (!window.novaConnections) throw new Error('连接文件服务不可用。')
+      if (kind === 'export') {
+        const saved = await window.novaConnections.write(JSON.stringify({ version: 1, assets }))
+        if (saved) setStatus('连接配置已导出，不含密码、私钥、口令或凭据引用。')
+      } else {
+        const result = await window.novaConnections.read()
+        if (result) {
+          const data = mergeConnections(assets, result.document, () => crypto.randomUUID())
+          setImportError(''); setPreview({ data: { ...data, orphaned: result.orphaned }, original: assets })
+        }
+      }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '连接配置导入 / 导出失败。') }
+    finally { transferPending.current = false; setTransferBusy(false) }
   }
   const updateView = (next: AssetView) => {
     const failure = persist(assets, next)
@@ -270,6 +294,8 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
           <Button variant="ghost" size="icon-sm" aria-label="添加连接" title="添加连接" disabled={!!initial.error || atAssetLimit} onClick={() => startCreate('connection', null)}><PlusIcon /></Button>
           <Button variant="ghost" size="icon-sm" aria-label="添加本地连接" title={atLimit ? '终端数量已达上限，请先关闭一个标签' : '添加本地连接'} disabled={!!initial.error || atAssetLimit || atLimit || picking} onClick={() => { void addLocal() }}><TerminalIcon /></Button>
           <Button variant="ghost" size="icon-sm" aria-label="添加分组" title="添加分组" disabled={!!initial.error || atAssetLimit || !canAddGroup(view.currentGroupId)} onClick={() => startCreate('group', view.currentGroupId)}><FolderPlusIcon /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="导入连接配置" title="导入连接配置" disabled={!!initial.error || transferBusy} onClick={() => { void transfer('import') }}><DownloadIcon /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label="导出连接配置" title="导出连接配置（不含认证信息）" disabled={!!initial.error || transferBusy} onClick={() => { void transfer('export') }}><UploadIcon /></Button>
           <span className="ml-auto truncate text-xs text-muted-foreground" title={assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '顶层'}>{assets.find((asset) => asset.id === view.currentGroupId)?.name ?? '顶层'}</span>
         </div>
       </div>
@@ -290,7 +316,22 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
           </EmptyHeader></Empty>}
         </>}
       </nav>
-      <p role="status" className="sr-only">{status}</p>
+      <p role="status" className="shrink-0 px-3 py-1 text-xs text-muted-foreground">{status}</p>
+      <Dialog open={preview !== null} onOpenChange={(open) => { if (!open) setPreview(null) }}>
+        <DialogContent><DialogHeader><DialogTitle>导入连接配置</DialogTitle><DialogDescription>合并到当前配置，不覆盖已有连接。导入不含认证信息，SSH 连接需编辑后补充认证。</DialogDescription></DialogHeader>
+          <p>新增 {preview?.data.connections} 个连接、{preview?.data.groups} 个分组，生成 {preview?.data.regenerated} 个新标识。</p>
+          {!!preview?.data.orphaned && <p>有 {preview.data.orphaned} 项找不到上级分组，将放到顶层。</p>}
+          {importError && <Alert variant="destructive"><AlertDescription>{importError}</AlertDescription></Alert>}
+          <DialogFooter><Button variant="outline" onClick={() => setPreview(null)}>取消</Button><Button onClick={() => {
+            if (!preview) return
+            if (assets !== preview.original) { setImportError('配置已变化，请取消后重新导入。'); return }
+            const failure = persist(preview.data.assets, view)
+            if (failure) { setImportError(failure); return }
+            setStatus(`已导入 ${preview.data.connections} 个连接；SSH 连接请编辑补充认证。`)
+            setPreview(null); setQuery('')
+          }}>确认导入</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       {creating && <AssetCreateDialog kind={creating.kind} parentId={creating.parentId} assets={assets} disabled={!!initial.error || atAssetLimit} atLimit={atLimit} onSave={save} onClose={closeDialog} />}
       {editing && <AssetEditDialog asset={editing} assets={assets} onSave={edit} onClose={closeDialog} />}
       {action && <AssetActionDialog action={action} assets={assets} onSave={async (next) => {

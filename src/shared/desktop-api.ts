@@ -1,5 +1,6 @@
 import type { ClientMessage, ServerMessage, SshOptions } from './terminal-protocol.ts'
 import type { Settings, SettingsSnapshot } from './settings.ts'
+import type { ConnectionExport } from './connection-transfer.ts'
 
 export const SETTINGS_CHANNELS = { initial: 'settings:initial', save: 'settings:save', event: 'settings:event' } as const
 export type DesktopSettingsApi = {
@@ -11,6 +12,8 @@ export const CLIPBOARD_CHANNELS = { read: 'clipboard:read', write: 'clipboard:wr
 export type DesktopClipboardApi = { read: () => Promise<string>; write: (text: string) => Promise<void> }
 export const LINK_CHANNEL = 'link:open'
 export type DesktopLinkApi = { open: (url: string) => Promise<void> }
+export const TRANSFER_CHANNELS = { read: 'connections:read', write: 'connections:write' } as const
+export type DesktopTransferApi = { read: () => Promise<{ document: ConnectionExport; orphaned: number } | null>; write: (document: string) => Promise<boolean> }
 export const EXIT_CHANNELS = { request: 'exit:request', reply: 'exit:reply' } as const
 export type DesktopExitApi = {
   onRequest: (listener: (id: number) => void) => () => void
@@ -47,5 +50,5 @@ export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credentia
 export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void> }
 
 declare global {
-  interface Window { novaLinks?: DesktopLinkApi; novaExit?: DesktopExitApi; novaClipboard?: DesktopClipboardApi; novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
+  interface Window { novaConnections?: DesktopTransferApi; novaLinks?: DesktopLinkApi; novaExit?: DesktopExitApi; novaClipboard?: DesktopClipboardApi; novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
 }

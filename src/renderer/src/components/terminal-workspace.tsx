@@ -95,6 +95,7 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
   const atLimit = state.tabs.length >= settings.maxSessions
   const openLabel = atLimit ? `最多打开 ${settings.maxSessions} 个终端，请先关闭一个标签` : '新建本地终端'
   const openSsh = (connection: AssetConnection) => {
+    if (connection.needsAuthentication) { setNotice('该连接缺少认证信息，请编辑连接补充。'); return false }
     if (atLimit) return false
     const { host, port, username } = connection
     dispatch({ type: 'open', limit: settings.maxSessions, ssh: { host, port, username, assetId: connection.credentialId ?? connection.id }, name: connection.name, assetId: connection.id })

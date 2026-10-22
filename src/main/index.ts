@@ -1,15 +1,18 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, shell, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, LINK_CHANNEL, EXIT_CHANNELS } from '../shared/desktop-api.ts'
+import { open as openFile } from 'node:fs/promises'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, LINK_CHANNEL, EXIT_CHANNELS, TRANSFER_CHANNELS } from '../shared/desktop-api.ts'
 import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
-import { createSettingsStore } from './settings-store.ts'
+import { atomicWrite, createSettingsStore } from './settings-store.ts'
 import type { Platform, SettingsSnapshot } from '../shared/settings.ts'
 import { MAX_COPY, MAX_PASTE, externalUrl } from '../shared/terminal-interactions.ts'
 import { createExitCoordinator } from './exit-coordinator.ts'
+import { MAX_TRANSFER_BYTES, exportConnections, parseConnectionImport } from '../shared/connection-transfer.ts'
+import { parseAssetDocument } from '../shared/assets.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 app.setName('NovaTerminal')
@@ -18,6 +21,7 @@ const rendererUrl = dev ? DEV_URL : APP_URL
 let window: BrowserWindow | null = null
 let quitting = false
 let pickingDirectory = false
+let transferring = false
 const platform: Platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
 let settings: ReturnType<typeof createSettingsStore>
 function settingsSnapshot(): SettingsSnapshot {
@@ -108,6 +112,53 @@ void app.whenReady().then(async () => {
     return settingsSnapshot()
   })
   nativeTheme.on('updated', publishSettings)
+  ipcMain.handle(TRANSFER_CHANNELS.read, async (event) => {
+    authorize(event)
+    const owner = window
+    if (!owner || transferring) return null
+    transferring = true
+    try {
+      const chosen = await dialog.showOpenDialog(owner, { title: '导入连接配置', properties: ['openFile'], filters: [{ name: 'NovaTerminal 连接配置', extensions: ['json'] }] })
+      if (chosen.canceled || !chosen.filePaths[0] || owner.isDestroyed() || owner !== window) return null
+      authorize(event)
+      const file = await openFile(chosen.filePaths[0], 'r')
+      let raw: unknown
+      try {
+        const info = await file.stat()
+        if (!info.isFile() || info.size > MAX_TRANSFER_BYTES) throw new Error('导入文件须为不超过 1 MiB 的 JSON 文件。')
+        const buffer = Buffer.alloc(MAX_TRANSFER_BYTES + 1)
+        let length = 0
+        while (length < buffer.length) {
+          const result = await file.read(buffer, length, buffer.length - length, null)
+          if (!result.bytesRead) break
+          length += result.bytesRead
+        }
+        if (length > MAX_TRANSFER_BYTES) throw new Error('导入文件超过 1 MiB。')
+        try { raw = JSON.parse(buffer.subarray(0, length).toString('utf8')) } catch { throw new Error('导入文件不是有效的 JSON。') }
+      } finally { await file.close() }
+      authorize(event)
+      const parsed = parseConnectionImport(raw)
+      return { document: exportConnections(parsed.assets), orphaned: parsed.orphaned }
+    } finally { transferring = false }
+  })
+  ipcMain.handle(TRANSFER_CHANNELS.write, async (event, raw: unknown) => {
+    authorize(event)
+    if (typeof raw !== 'string' || Buffer.byteLength(raw) > MAX_TRANSFER_BYTES) throw new Error('导出配置超过 1 MiB。')
+    const assets = parseAssetDocument(JSON.parse(raw))
+    if (!assets) throw new Error('导出配置无效。')
+    const text = JSON.stringify(exportConnections(assets), null, 2)
+    if (Buffer.byteLength(text) > MAX_TRANSFER_BYTES) throw new Error('导出文件超过 1 MiB。')
+    const owner = window
+    if (!owner || transferring) return false
+    transferring = true
+    try {
+      const chosen = await dialog.showSaveDialog(owner, { title: '导出连接配置（不含认证信息）', defaultPath: `novaterminal-connections-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] })
+      if (chosen.canceled || !chosen.filePath || owner.isDestroyed() || owner !== window) return false
+      authorize(event)
+      try { atomicWrite(chosen.filePath, text) } catch { throw new Error('导出保存失败，请检查目标目录权限和磁盘空间。') }
+      return true
+    } finally { transferring = false }
+  })
   ipcMain.handle(LINK_CHANNEL, async (event, raw: unknown) => {
     authorize(event)
     const url = externalUrl(raw)
