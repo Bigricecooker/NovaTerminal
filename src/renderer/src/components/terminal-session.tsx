@@ -12,14 +12,10 @@ import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 import { FONT_STACKS, type Settings } from '@shared/settings'
 
-type Phase = 'connecting' | 'verifying' | 'running' | 'closed' | 'error'
+import { phaseLabels, type Phase } from '@shared/terminal-interactions'
 type Session = { phase: Phase; detail: string; shell: string }
 type HostKey = Extract<ServerMessage, { type: 'host-key' }>
 type Controls = { terminal: Terminal; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
-
-const phaseLabels: Record<Phase, string> = {
-  connecting: '连接中', verifying: '待确认指纹', running: '运行中', closed: '已结束', error: '连接失败',
-}
 
 function terminalTheme(): ITheme {
   const style = getComputedStyle(document.documentElement)
@@ -36,8 +32,9 @@ function terminalTheme(): ITheme {
   }
 }
 
-export function TerminalSession({ dark, settings, active, label, target }: {
+export function TerminalSession({ dark, settings, active, label, target, onPhase, onReconnect }: {
   dark: boolean; settings: Settings; active: boolean; label: string; target: TerminalTarget
+  onPhase: (phase: Phase) => void; onReconnect: () => void
 }) {
   const container = useRef<HTMLDivElement>(null)
   const controls = useRef<Controls | null>(null)
@@ -45,6 +42,8 @@ export function TerminalSession({ dark, settings, active, label, target }: {
   const [session, setSession] = useState<Session>({ phase: 'connecting', detail: target.kind === 'ssh' ? '正在连接 SSH 服务器…' : '正在启动本地 Shell…', shell: '' })
   const [hostKey, setHostKey] = useState<HostKey | null>(null)
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
+
+  useEffect(() => { onPhase(session.phase) }, [onPhase, session.phase])
 
   useEffect(() => {
     if (!container.current) return
@@ -151,8 +150,8 @@ export function TerminalSession({ dark, settings, active, label, target }: {
     }
     const transport = createTerminalTransport({
       open: fitTerminal, message: receiveMessage,
-      error: () => stop('error', '无法连接终端会话，请重新打开终端。'),
-      close: () => stop('closed', '连接已断开；可通过右上角图标新建终端。'),
+      error: () => stop('error', '无法连接终端会话，可能已达会话上限或上个会话仍在清理，请稍后重新连接。'),
+      close: () => stop('closed', '连接已断开，可手动重新连接。'),
     }, window.novaTerminal)
     controls.current = {
       terminal,
@@ -236,6 +235,7 @@ export function TerminalSession({ dark, settings, active, label, target }: {
           <p className="min-w-0 break-all">{session.shell && `${session.shell} · `}{session.detail}</p>
         </div>
         <div className="flex shrink-0 items-center gap-4 font-mono tabular-nums">
+          {(session.phase === 'error' || session.phase === 'closed') && <Button size="xs" variant="outline" onClick={onReconnect}>重新连接</Button>}
           {size && <span aria-label={`${size.cols} 列 ${size.rows} 行`}>{size.cols} × {size.rows}</span>}
           <span className="hidden sm:inline">UTF-8</span>
         </div>

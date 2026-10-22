@@ -3,12 +3,23 @@ import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNE
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
 import { SETTINGS_CHANNELS, type DesktopSettingsApi } from '../shared/desktop-api.ts'
 import type { SettingsSnapshot } from '../shared/settings.ts'
+import { EXIT_CHANNELS, type DesktopExitApi } from '../shared/desktop-api.ts'
 
 function publicFailure(error: unknown, fallback: string): never {
   const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : ''
   // Known validation messages are localized; filesystem / IPC details stay out of the UI.
   throw new Error(/^[\u4e00-\u9fff]/.test(message) ? message : fallback)
 }
+const exitApi: DesktopExitApi = {
+  reply: (id, action) => ipcRenderer.invoke(EXIT_CHANNELS.reply, id, action),
+  onRequest: (listener) => {
+    const handler = (_event: IpcRendererEvent, id: number) => listener(id)
+    ipcRenderer.on(EXIT_CHANNELS.request, handler)
+    return () => { ipcRenderer.removeListener(EXIT_CHANNELS.request, handler) }
+  },
+}
+contextBridge.exposeInMainWorld('novaExit', exitApi)
+
 const settingsApi: DesktopSettingsApi = {
   initial: ipcRenderer.sendSync(SETTINGS_CHANNELS.initial),
   save: (values) => ipcRenderer.invoke(SETTINGS_CHANNELS.save, JSON.stringify(values)).catch((error: unknown) => publicFailure(error, '设置保存失败，请重试。')),

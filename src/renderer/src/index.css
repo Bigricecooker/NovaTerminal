@@ -15,6 +15,13 @@
     -webkit-app-region: no-drag;
 }
 
+.terminal-tabs-scroll { scrollbar-width: none; }
+.terminal-tabs-scroll::-webkit-scrollbar { display: none; }
+.session-status { background: var(--muted-foreground); }
+.session-status[data-phase="connecting"], .session-status[data-phase="verifying"] { background: var(--terminal-yellow); }
+.session-status[data-phase="running"] { background: var(--terminal-green); }
+.session-status[data-phase="error"] { background: var(--terminal-red); }
+
 @theme inline {
     --color-terminal-background: var(--terminal-background);
     --font-heading: var(--font-sans);

@@ -17,19 +17,19 @@ console.log('正在启动 NovaTerminal 桌面窗口…')
 // SW_HIDE can suppress the GUI window's first show on Windows.
 const child = spawn(electron, ['.'], { env, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: false })
 let stopping = false
-const stop = async () => {
+const stop = () => {
   if (stopping) return
   stopping = true
   if (child.connected) child.send({ type: 'app:quit' })
   else child.kill()
-  const timeout = setTimeout(() => child.kill(), 5_000)
-  timeout.unref()
-  child.once('exit', () => clearTimeout(timeout))
-  await server?.close()
+  // Keep Vite alive while the user decides. Main owns acknowledgement timeouts.
 }
-process.once('SIGINT', () => { void stop() })
-process.once('SIGTERM', () => { void stop() })
-child.once('error', async (error) => { console.error(`无法启动 NovaTerminal：${error.message}`); await stop(); process.exitCode = 1 })
+child.on('message', (message) => {
+  if (message && typeof message === 'object' && message.type === 'app:quit-cancelled') stopping = false
+})
+process.on('SIGINT', stop)
+process.on('SIGTERM', stop)
+child.once('error', async (error) => { console.error(`无法启动 NovaTerminal：${error.message}`); stop(); await server?.close(); process.exitCode = 1 })
 child.once('exit', async (code) => {
   if (code !== 0) console.error(`NovaTerminal 已异常退出（退出码：${code ?? '未知'}）。`)
   await server?.close()

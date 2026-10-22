@@ -1,4 +1,4 @@
-const { app, dialog, safeStorage, utilityProcess } = require('electron')
+const { app, clipboard, dialog, safeStorage, utilityProcess } = require('electron')
 const assert = require('node:assert/strict')
 const fs = require('node:fs/promises')
 const path = require('node:path')
@@ -118,6 +118,12 @@ app.on('browser-window-created', (_event, window) => {
       await evaluate(`document.querySelector('button[aria-label="新建本地终端"]').click()`)
       await wait("window.__smoke.events.filter(e => e.message?.type === 'ready').length === 2")
       await evaluate(`document.querySelector('button[aria-label="关闭本地终端 2"]').click()`)
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await evaluate('document.querySelector(\'[data-slot="alert-dialog-cancel"]\').click()')
+      assert.equal(await evaluate('document.querySelectorAll(\'[role="tab"]\').length'), 2)
+      await evaluate(`document.querySelector('button[aria-label="关闭本地终端 2"]').click()`)
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await evaluate('document.querySelector(\'[data-slot="alert-dialog-action"]\').click()')
       await wait('document.querySelectorAll(\'[role="tab"]\').length === 1')
       await evaluate(`document.querySelector('button[aria-label="切换深色主题"]').click()`)
       await wait('document.documentElement.classList.contains("dark")')
@@ -207,6 +213,7 @@ app.on('browser-window-created', (_event, window) => {
       await wait("window.__smoke.events.filter(e => e.message?.type === 'ready').length === 3")
       await evaluate("window.__smoke.ssh = window.__smoke.events.find(e => e.message?.type === 'host-key').id; window.novaTerminal.send(window.__smoke.ssh, {type:'input',data:'NOVA_SSH_ELECTRON_OK'})")
       await wait('window.__smoke.output.includes("ECHO:NOVA_SSH_ELECTRON_OK")')
+      await clipboard.writeText('x'.repeat(16383) + '🚀中文_NOVA_PASTE_OK')
       await evaluate(`(() => {
         const textarea = document.querySelector('[role="tabpanel"][data-state="active"] .xterm-helper-textarea');
         if (!textarea) throw new Error('Active SSH terminal input not found');
@@ -259,8 +266,12 @@ app.on('browser-window-created', (_event, window) => {
         await evaluate(`window.novaTerminal.send(window.__smoke.local, {type:'input', data:${JSON.stringify(checkCwd)}})`)
         await wait('window.__smoke.output.includes("NOVA_CWD_OK")')
         await evaluate('document.querySelector(\'button[aria-label="关闭项目 目录"]\').click()')
+        await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+        await evaluate('document.querySelector(\'[data-slot="alert-dialog-action"]\').click()')
         await wait(`document.querySelectorAll('[data-session-tab]').length === ${beforeTabs}`)
         await waitWorkers(beforeTabs)
+        await wait('!document.querySelector(\'[role="alertdialog"]\') && getComputedStyle(document.body).pointerEvents !== "none"')
+        await delay(150)
         await pointerClick('button[aria-label="连接 项目 目录"]')
         assert.equal(await evaluate('document.querySelectorAll("[data-session-tab]").length'), beforeTabs, 'A single local asset click must not open a session')
         assert.equal(await evaluate('Boolean(document.querySelector(\'[role="dialog"]\'))'), false)
@@ -362,9 +373,20 @@ app.on('browser-window-created', (_event, window) => {
       console.log('Desktop smoke passed: unified title bar, window button input, state sync, theme, sandbox, preload, PTY, input, tabs, resize, SSH trust, authentication, Unicode paste, directory picker cancellation, save failure, local cwd, connection editing, credential revision rollback, live tab names and edited SSH reopen.')
       const closed = once(window, 'closed')
       await clickWindowButton('关闭窗口')
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await evaluate('document.querySelector(\'[data-slot="alert-dialog-cancel"]\').click()')
+      assert.equal(window.isDestroyed(), false)
+      await wait('!document.querySelector(\'[role="alertdialog"]\') && getComputedStyle(document.body).pointerEvents !== "none"')
+      await clickWindowButton('关闭窗口')
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await evaluate('document.querySelector(\'[data-slot="alert-dialog-action"]\').click()')
       await closed
       if (process.platform === 'darwin') app.quit()
-    } catch (error) { console.error(error); process.exitCode = 1; await closeTestServer(); app.quit() }
+    } catch (error) {
+      console.error(error); process.exitCode = 1
+      await fs.writeFile(path.join(__dirname, '../test-results/desktop-failure.png'), (await window.webContents.capturePage()).toPNG())
+      await closeTestServer(); app.exit(1)
+    }
   })
 })
 app.on('quit', () => {

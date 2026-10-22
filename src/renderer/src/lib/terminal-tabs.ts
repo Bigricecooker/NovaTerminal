@@ -1,17 +1,19 @@
 import { MAX_SESSIONS, type SavedSshConnection } from '../../../shared/terminal-protocol.ts'
 
 export type TerminalTarget = { kind: 'local'; cwd?: string } | ({ kind: 'ssh' } & SavedSshConnection)
-type TerminalTab = { id: string; label: string; target: TerminalTarget; assetId?: string }
+type TerminalTab = { id: string; label: string; target: TerminalTarget; assetId?: string; generation?: number }
 export type TerminalTabs = { tabs: TerminalTab[]; activeId: string | null; nextId: number }
 type TabAction = { type: 'open'; limit?: number; ssh?: SavedSshConnection; name?: string; assetId?: string; local?: { directory: string; name: string } }
   | { type: 'sync-assets'; assets: { id: string; name: string }[] }
   | { type: 'select' | 'close'; id: string }
   | { type: 'move'; id: string; targetId: string; position: 'before' | 'after' }
+  | { type: 'reconnect'; id: string; target: TerminalTarget }
 
 export const initialTerminalTabs: TerminalTabs = { tabs: [], activeId: null, nextId: 1 }
 
 export function terminalTabsReducer(state: TerminalTabs, action: TabAction): TerminalTabs {
   switch (action.type) {
+    case 'reconnect': return { ...state, tabs: state.tabs.map((tab) => tab.id === action.id ? { ...tab, target: action.target, generation: (tab.generation ?? 0) + 1 } : tab) }
     case 'open': {
       if (state.tabs.length >= Math.max(1, Math.min(8, action.limit ?? MAX_SESSIONS))) return state
       const tab: TerminalTab = action.ssh

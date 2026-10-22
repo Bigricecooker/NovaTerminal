@@ -55,7 +55,7 @@ export default function App() {
       {settingsOpen && <SettingsDialog snapshot={snapshot} onClose={() => setSettingsOpen(false)} onSave={save} />}
       <main className="flex min-h-0 flex-1 flex-col" aria-label="工作区">
         <Suspense fallback={<p className="p-4 text-sm text-muted-foreground" role="status">正在加载终端…</p>}>
-          <TerminalWorkspace dark={dark} settings={snapshot.values} actionContainer={terminalActions} />
+          <TerminalWorkspace dark={dark} settings={snapshot.values} platform={snapshot.platform} onSettings={() => setSettingsOpen(true)} actionContainer={terminalActions} />
         </Suspense>
       </main>
     </div>

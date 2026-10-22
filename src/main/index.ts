@@ -1,13 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, EXIT_CHANNELS } from '../shared/desktop-api.ts'
 import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 import { createSettingsStore } from './settings-store.ts'
 import type { Platform, SettingsSnapshot } from '../shared/settings.ts'
+import { createExitCoordinator } from './exit-coordinator.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 app.setName('NovaTerminal')
@@ -39,6 +40,16 @@ const sessions = createDesktopSessions(
   (reference) => credentialStore().load(reference),
   () => settings.get(),
 )
+const exit = createExitCoordinator((id) => {
+  if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(EXIT_CHANNELS.request, id)
+}, () => {
+  quitting = true
+  void sessions.shutdown().finally(() => app.quit())
+})
+function requestExit() {
+  exit.begin(Boolean(settings?.get().confirmExit && window && !window.isDestroyed() && !window.webContents.isDestroyed()))
+}
+
 function authorize(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): number {
   if (!window || window.isDestroyed() || !event.senderFrame
     || !trustedFrame(event.sender.id, window.webContents.id, event.senderFrame === event.sender.mainFrame, event.senderFrame.url, rendererUrl)) {
@@ -69,9 +80,14 @@ async function createWindow() {
   current.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   current.webContents.on('will-navigate', (event) => { if (event.url !== rendererUrl) event.preventDefault() })
   current.webContents.on('will-attach-webview', (event) => event.preventDefault())
-  current.webContents.on('render-process-gone', () => sessions.closeOwner(current.webContents.id))
+  current.webContents.on('render-process-gone', () => { sessions.closeOwner(current.webContents.id); exit.unavailable() })
   current.webContents.on('did-start-loading', () => sessions.closeOwner(current.webContents.id))
-  current.on('close', () => sessions.closeOwner(current.webContents.id))
+  current.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    requestExit()
+  })
+  current.on('query-session-end', () => { exit.begin(false) })
   current.on('closed', () => { if (window === current) window = null })
   current.once('ready-to-show', () => current.show())
   await current.loadURL(rendererUrl)
@@ -91,6 +107,14 @@ void app.whenReady().then(async () => {
     return settingsSnapshot()
   })
   nativeTheme.on('updated', publishSettings)
+  ipcMain.handle(EXIT_CHANNELS.reply, (event, id: unknown, action: unknown) => {
+    authorize(event)
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || !['ack', 'cancel', 'exit'].includes(String(action))) throw new Error('无效的退出响应。')
+    if (action === 'ack' || action === 'cancel' || action === 'exit') {
+      exit.reply(id, action)
+      if (action === 'cancel' && process.connected) process.send?.({ type: 'app:quit-cancelled' })
+    }
+  })
   const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'"
   protocol.handle('app', async (request) => {
     const file = assetPath(join(__dirname, '../../dist'), request.url)
@@ -150,8 +174,7 @@ void app.whenReady().then(async () => {
 app.on('before-quit', (event) => {
   if (quitting) return
   event.preventDefault()
-  quitting = true
-  void sessions.shutdown().finally(() => app.quit())
+  requestExit()
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 process.on('message', (message: unknown) => {

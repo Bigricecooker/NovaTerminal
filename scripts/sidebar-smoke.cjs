@@ -264,6 +264,8 @@ app.once('browser-window-created', (_event, window) => {
       assert.equal(await evaluate('window.__localTerminal === document.querySelector(".xterm")'), true)
       assert.equal(await stored('data.assets.find(a => a.id === "local").directory'), app.getPath('temp'))
       await click('button[aria-label="关闭新本地目录"]')
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await click('[data-slot="alert-dialog-action"]')
       await wait('!document.querySelector("[data-session-tab]")')
       loaded = once(page, 'did-finish-load'); page.reload(); await loaded
       await wait('Boolean(document.querySelector(\'button[aria-label="连接 新本地目录"]\'))')
@@ -292,11 +294,16 @@ app.once('browser-window-created', (_event, window) => {
       await wait('document.querySelector("[data-session-tab]").dataset.sessionTab === "local-1"')
       assert.equal(await evaluate('window.__ui.events.filter(e => e.closed).length === window.__ui.closedBefore'), true)
       await click('button[aria-label="关闭本地终端 2"]')
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await click('[data-slot="alert-dialog-action"]')
       await wait('document.querySelectorAll("[data-session-tab]").length === 1')
       assert.equal(await evaluate('document.querySelector(\'[role="tab"][data-state="active"]\').textContent.trim()'), '本地终端 1')
       page.debugger.detach()
       console.log('Desktop smoke passed: flat ungrouped SSH/local assets, folders-first order, expansion, group create scope, connection editing, endpoint validation, private key form, local directory editing, live tab names, search, real drag hierarchy, persisted state, menu placement, rename, move, delete, quota failure and live tab reorder.')
-      const closed = once(window,'closed'); window.close(); await closed
+      const closed = once(window,'closed'); window.close()
+      await wait('Boolean(document.querySelector(\'[role="alertdialog"]\'))')
+      await click('[data-slot="alert-dialog-action"]')
+      await closed
       if (process.platform === 'darwin') app.quit()
     } catch (error) {
       console.error(error)
