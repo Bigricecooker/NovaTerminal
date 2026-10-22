@@ -20,7 +20,7 @@ const temporary = await mkdtemp(join(tmpdir(), 'novaterminal-desktop-test-'))
 env.APPDATA = temporary
 env.XDG_CONFIG_HOME = temporary
 env.NOVA_TEST_PROFILE = temporary
-const args = [process.argv.includes('--p0') ? 'scripts/p0-smoke.cjs' : sidebar ? 'scripts/sidebar-smoke.cjs' : 'scripts/electron-smoke.cjs']
+const args = [process.argv.includes('--acceptance') ? 'scripts/p0-acceptance.cjs' : process.argv.includes('--p0') ? 'scripts/p0-smoke.cjs' : sidebar ? 'scripts/sidebar-smoke.cjs' : 'scripts/electron-smoke.cjs']
 const entry = process.argv.slice(2).find((argument) => !argument.startsWith('--'))
 if (entry) args.push(resolve(entry))
 const child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false })

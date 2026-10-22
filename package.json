@@ -15,6 +15,7 @@
     "test:desktop": "npm run build && node scripts/test-desktop.mjs",
     "test:sidebar": "npm run build && node scripts/test-desktop.mjs --sidebar",
     "test:p0": "npm run build && node scripts/test-desktop.mjs --p0",
+    "test:acceptance": "npm run build && node scripts/test-desktop.mjs --acceptance",
     "test:package": "node scripts/test-package.mjs"
   },
   "dependencies": {
