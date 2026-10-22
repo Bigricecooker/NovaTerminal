@@ -3,6 +3,8 @@ import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNE
 import { parseClientMessage } from '../shared/terminal-protocol.ts'
 import { SETTINGS_CHANNELS, type DesktopSettingsApi } from '../shared/desktop-api.ts'
 import type { SettingsSnapshot } from '../shared/settings.ts'
+import { CLIPBOARD_CHANNELS, type DesktopClipboardApi } from '../shared/desktop-api.ts'
+import { MAX_COPY } from '../shared/terminal-interactions.ts'
 import { EXIT_CHANNELS, type DesktopExitApi } from '../shared/desktop-api.ts'
 
 function publicFailure(error: unknown, fallback: string): never {
@@ -19,6 +21,13 @@ const exitApi: DesktopExitApi = {
   },
 }
 contextBridge.exposeInMainWorld('novaExit', exitApi)
+
+const clipboardApi: DesktopClipboardApi = {
+  read: () => ipcRenderer.invoke(CLIPBOARD_CHANNELS.read),
+  write: (text) => typeof text === 'string' && text.length <= MAX_COPY
+    ? ipcRenderer.invoke(CLIPBOARD_CHANNELS.write, text) : Promise.reject(new Error('复制内容超过上限。')),
+}
+contextBridge.exposeInMainWorld('novaClipboard', clipboardApi)
 
 const settingsApi: DesktopSettingsApi = {
   initial: ipcRenderer.sendSync(SETTINGS_CHANNELS.initial),

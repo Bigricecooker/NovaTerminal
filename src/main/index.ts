@@ -1,13 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, utilityProcess } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, EXIT_CHANNELS } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, EXIT_CHANNELS } from '../shared/desktop-api.ts'
 import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 import { createSettingsStore } from './settings-store.ts'
 import type { Platform, SettingsSnapshot } from '../shared/settings.ts'
+import { MAX_COPY, MAX_PASTE } from '../shared/terminal-interactions.ts'
 import { createExitCoordinator } from './exit-coordinator.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
@@ -114,6 +115,18 @@ void app.whenReady().then(async () => {
       exit.reply(id, action)
       if (action === 'cancel' && process.connected) process.send?.({ type: 'app:quit-cancelled' })
     }
+  })
+  ipcMain.handle(CLIPBOARD_CHANNELS.read, async (event) => {
+    authorize(event)
+    const text = await clipboard.readText()
+    authorize(event)
+    if (text.length > MAX_PASTE) throw new Error('粘贴超过 64 KiB，请分段粘贴。')
+    return text
+  })
+  ipcMain.handle(CLIPBOARD_CHANNELS.write, async (event, text: unknown) => {
+    authorize(event)
+    if (typeof text !== 'string' || text.length > MAX_COPY) throw new Error('复制内容超过 1 MiB 上限。')
+    await clipboard.writeText(text)
   })
   const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'"
   protocol.handle('app', async (request) => {

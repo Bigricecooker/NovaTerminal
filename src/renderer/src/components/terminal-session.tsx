@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ShieldCheckIcon } from 'lucide-react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -11,8 +11,10 @@ import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 import { FONT_STACKS, type Settings } from '@shared/settings'
+import { MAX_COPY, MAX_PASTE, composing, phaseLabels, type Phase } from '@shared/terminal-interactions'
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog'
 
-import { phaseLabels, type Phase } from '@shared/terminal-interactions'
 type Session = { phase: Phase; detail: string; shell: string }
 type HostKey = Extract<ServerMessage, { type: 'host-key' }>
 type Controls = { terminal: Terminal; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
@@ -39,10 +41,18 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   const container = useRef<HTMLDivElement>(null)
   const controls = useRef<Controls | null>(null)
   const activeRef = useRef(active)
+  const settingsRef = useRef(settings)
+  useEffect(() => { settingsRef.current = settings }, [settings])
+  const [notice, setNotice] = useState('')
+  const [selection, setSelection] = useState(false)
+  const [pastePreview, setPastePreview] = useState<{ lines: number; length: number } | null>(null)
+  const pasteApproval = useRef<((accept: boolean) => void) | null>(null)
+  const copyAction = useRef<() => void>(() => {})
+  const pasteAction = useRef<() => void>(() => {})
   const [session, setSession] = useState<Session>({ phase: 'connecting', detail: target.kind === 'ssh' ? '正在连接 SSH 服务器…' : '正在启动本地 Shell…', shell: '' })
   const [hostKey, setHostKey] = useState<HostKey | null>(null)
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
-
+  const clearSearch = useCallback(() => { controls.current?.terminal.clearSelection() }, [])
   useEffect(() => { onPhase(session.phase) }, [onPhase, session.phase])
 
   useEffect(() => {
@@ -57,13 +67,70 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(element)
-
     let disposed = false
     let ended = false
     let started = false
     let ready = false
     let frame = 0
     let timeout = 0
+    let selecting = false
+    let selectionTimer = 0
+    let pasting = false
+    const copy = async () => {
+      if (disposed || !activeRef.current || !terminal.hasSelection()) return
+      const text = terminal.getSelection()
+      if (text.length > MAX_COPY) { setNotice('复制内容超过 1 MiB 上限。'); return }
+      try {
+        if (!window.novaClipboard) throw new Error('剪贴板不可用。')
+        await window.novaClipboard.write(text)
+        if (!disposed) setNotice('已复制。')
+      } catch { if (!disposed) setNotice('复制失败，请检查剪贴板是否可用。') }
+    }
+    const paste = async () => {
+      if (disposed || !activeRef.current || !ready || pasting) return
+      pasting = true
+      try {
+        if (!window.novaClipboard) throw new Error('剪贴板不可用。')
+        const text = await window.novaClipboard.read()
+        if (disposed || !activeRef.current || !ready || !text) return
+        if (text.length > MAX_PASTE) { setNotice('粘贴超过 64 KiB，请分段粘贴。'); return }
+        if (settingsRef.current.confirmMultiline && /[\r\n]/.test(text)) {
+          setPastePreview({ lines: text.split(/\r\n|\r|\n/).length, length: text.length })
+          const accepted = await new Promise<boolean>((resolve) => { pasteApproval.current = resolve })
+          pasteApproval.current = null
+          setPastePreview(null)
+          if (!accepted) return
+        }
+        if (!disposed && activeRef.current && ready) { terminal.paste(text); terminal.focus() }
+      } catch (error) { if (!disposed) setNotice(error instanceof Error && error.message.includes('64 KiB') ? '粘贴超过 64 KiB，请分段粘贴。' : '无法读取剪贴板。') }
+      finally { pasting = false }
+    }
+    copyAction.current = () => { void copy() }
+    pasteAction.current = () => { void paste() }
+    const nativePaste = (event: ClipboardEvent) => { event.preventDefault(); event.stopImmediatePropagation(); void paste() }
+    element.addEventListener('paste', nativePaste, true)
+    const startSelection = () => { selecting = true }
+    const finishSelection = () => { const wasSelecting = selecting; selecting = false; if (wasSelecting && settingsRef.current.copyOnSelect) void copy() }
+    element.addEventListener('pointerdown', startSelection)
+    window.addEventListener('pointerup', finishSelection)
+    const selectionSubscription = terminal.onSelectionChange(() => {
+      setSelection(terminal.hasSelection())
+      clearTimeout(selectionTimer)
+      if (!selecting && settingsRef.current.copyOnSelect) selectionTimer = window.setTimeout(() => { void copy() }, 180)
+    })
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown' || composing(event)) return true
+      const mac = window.novaSettings?.initial.platform === 'darwin'
+      const primary = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      const key = event.key.toLowerCase()
+      if (primary && !event.altKey && key === 'c' && (event.shiftKey || terminal.hasSelection())) {
+        event.preventDefault(); void copy(); return false
+      }
+      if (primary && !event.altKey && key === 'v' && (mac || event.shiftKey)) {
+        event.preventDefault(); void paste(); return false
+      }
+      return true
+    })
     const send = (message: ClientMessage) => {
       if (!disposed && transport.isOpen()) transport.send(message)
     }
@@ -110,8 +177,9 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     const input = terminal.onData((data) => {
       if (!ready || ended) return
       // Bound a single paste so it cannot enqueue an unlimited amount of input.
-      if (data.length > 65_536 || transport.buffered() > 65_536) {
-        stop('error', '输入超过缓冲限制，会话已关闭，请新建终端。')
+      // Bracketed paste adds 12 units around a bounded clipboard payload.
+      if (data.length > MAX_PASTE + 12 || transport.buffered() + data.length > 131_072) {
+        setNotice('输入超过缓冲限制，请稍后分段粘贴。')
         return
       }
       for (const chunk of terminalInputChunks(data)) {
@@ -166,6 +234,13 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
     return () => {
       disposed = true
+      pasteApproval.current?.(false)
+      pasteApproval.current = null
+      clearTimeout(selectionTimer)
+      selectionSubscription.dispose()
+      element.removeEventListener('paste', nativePaste, true)
+      element.removeEventListener('pointerdown', startSelection)
+      window.removeEventListener('pointerup', finishSelection)
       clearTimeout(timeout)
       cancelAnimationFrame(frame)
       observer.disconnect()
@@ -210,6 +285,12 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
+      <AlertDialog open={pastePreview !== null} onOpenChange={(open) => { if (!open) pasteApproval.current?.(false) }}>
+        <AlertDialogContent onEscapeKeyDown={(event) => { if (composing(event)) event.preventDefault() }}>
+          <AlertDialogHeader><AlertDialogTitle>确认多行粘贴</AlertDialogTitle><AlertDialogDescription>即将粘贴 {pastePreview?.lines} 行、{pastePreview?.length} 个字符，可能执行多条命令。</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel onClick={() => pasteApproval.current?.(false)}>取消</AlertDialogCancel><AlertDialogAction onClick={() => pasteApproval.current?.(true)}>粘贴</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {hostKey && (
         <div className="shrink-0 p-4">
           <Alert>
@@ -226,9 +307,20 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           </Alert>
         </div>
       )}
+      <ContextMenu><ContextMenuTrigger asChild>
       <div className="relative min-h-0 flex-1 bg-terminal-background">
         <div ref={container} className="absolute inset-0 overflow-hidden p-3 sm:p-4" aria-label={`${label}输入输出`} />
       </div>
+      </ContextMenuTrigger><ContextMenuContent onCloseAutoFocus={(event) => { event.preventDefault(); if (!pasteApproval.current) controls.current?.terminal.focus() }}>
+        <ContextMenuGroup>
+          <ContextMenuItem disabled={!selection} onSelect={() => copyAction.current()}>复制</ContextMenuItem>
+          <ContextMenuItem disabled={session.phase !== 'running'} onSelect={() => pasteAction.current()}>粘贴</ContextMenuItem>
+          <ContextMenuItem onSelect={() => controls.current?.terminal.selectAll()}>全选</ContextMenuItem>
+        </ContextMenuGroup><ContextMenuSeparator /><ContextMenuGroup>
+          <ContextMenuItem onSelect={() => { clearSearch(); controls.current?.terminal.clear() }}>清屏</ContextMenuItem>
+        </ContextMenuGroup>
+      </ContextMenuContent></ContextMenu>
+      {notice && <div className="flex shrink-0 items-center justify-between gap-2 px-4 text-xs" role="status">{notice}<Button variant="ghost" size="xs" onClick={() => setNotice('')}>关闭提示</Button></div>}
       <footer className="flex min-h-9 shrink-0 items-center justify-between gap-4 border-t px-4 py-2 text-xs text-muted-foreground">
         <div role="status" aria-live="polite" className="flex min-w-0 items-center gap-2">
           <Badge variant={session.phase === 'error' ? 'destructive' : 'secondary'} className="shrink-0">{phaseLabels[session.phase]}</Badge>
