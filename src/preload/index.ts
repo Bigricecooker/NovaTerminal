@@ -6,12 +6,16 @@ import type { SettingsSnapshot } from '../shared/settings.ts'
 import { CLIPBOARD_CHANNELS, type DesktopClipboardApi } from '../shared/desktop-api.ts'
 import { MAX_COPY } from '../shared/terminal-interactions.ts'
 import { EXIT_CHANNELS, type DesktopExitApi } from '../shared/desktop-api.ts'
+import { LINK_CHANNEL, type DesktopLinkApi } from '../shared/desktop-api.ts'
 
 function publicFailure(error: unknown, fallback: string): never {
   const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : ''
   // Known validation messages are localized; filesystem / IPC details stay out of the UI.
   throw new Error(/^[\u4e00-\u9fff]/.test(message) ? message : fallback)
 }
+const linksApi: DesktopLinkApi = { open: (url) => ipcRenderer.invoke(LINK_CHANNEL, url) }
+contextBridge.exposeInMainWorld('novaLinks', linksApi)
+
 const exitApi: DesktopExitApi = {
   reply: (id, action) => ipcRenderer.invoke(EXIT_CHANNELS.reply, id, action),
   onRequest: (listener) => {

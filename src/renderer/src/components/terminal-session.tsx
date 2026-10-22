@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ShieldCheckIcon } from 'lucide-react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import { TerminalSearch } from '@/components/terminal-search'
 import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,13 +14,13 @@ import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 import { FONT_STACKS, type Settings } from '@shared/settings'
-import { MAX_COPY, MAX_PASTE, composing, phaseLabels, type Phase } from '@shared/terminal-interactions'
+import { MAX_COPY, MAX_PASTE, composing, externalUrl, phaseLabels, type Phase } from '@shared/terminal-interactions'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog'
 
 type Session = { phase: Phase; detail: string; shell: string }
 type HostKey = Extract<ServerMessage, { type: 'host-key' }>
-type Controls = { terminal: Terminal; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
+type Controls = { terminal: Terminal; search: SearchAddon; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
 
 function terminalTheme(): ITheme {
   const style = getComputedStyle(document.documentElement)
@@ -45,6 +48,8 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   useEffect(() => { settingsRef.current = settings }, [settings])
   const [notice, setNotice] = useState('')
   const [selection, setSelection] = useState(false)
+  const [searchAddon, setSearchAddon] = useState<SearchAddon | null>(null)
+  const searchOpenRef = useRef(false)
   const [pastePreview, setPastePreview] = useState<{ lines: number; length: number } | null>(null)
   const pasteApproval = useRef<((accept: boolean) => void) | null>(null)
   const copyAction = useRef<() => void>(() => {})
@@ -52,7 +57,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   const [session, setSession] = useState<Session>({ phase: 'connecting', detail: target.kind === 'ssh' ? '正在连接 SSH 服务器…' : '正在启动本地 Shell…', shell: '' })
   const [hostKey, setHostKey] = useState<HostKey | null>(null)
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
-  const clearSearch = useCallback(() => { controls.current?.terminal.clearSelection() }, [])
+  const clearSearch = useCallback(() => { controls.current?.search.clearDecorations(); controls.current?.terminal.clearSelection() }, [])
   useEffect(() => { onPhase(session.phase) }, [onPhase, session.phase])
 
   useEffect(() => {
@@ -67,6 +72,18 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(element)
+    const search = new SearchAddon()
+    terminal.loadAddon(search)
+    const openLink = (event: MouseEvent, uri: string) => {
+      if (event.button !== 0 || !externalUrl(uri)) return
+      const modifier = window.novaSettings?.initial.platform === 'darwin' ? event.metaKey : event.ctrlKey
+      if (terminal.modes.mouseTrackingMode !== 'none' && !modifier) return
+      event.preventDefault()
+      void window.novaLinks?.open(uri).catch(() => { if (!disposed) setNotice('无法打开链接，请检查系统浏览器。') })
+    }
+    terminal.loadAddon(new WebLinksAddon(openLink))
+    terminal.options.linkHandler = { activate: openLink }
+
     let disposed = false
     let ended = false
     let started = false
@@ -110,19 +127,22 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     const nativePaste = (event: ClipboardEvent) => { event.preventDefault(); event.stopImmediatePropagation(); void paste() }
     element.addEventListener('paste', nativePaste, true)
     const startSelection = () => { selecting = true }
-    const finishSelection = () => { const wasSelecting = selecting; selecting = false; if (wasSelecting && settingsRef.current.copyOnSelect) void copy() }
+    const finishSelection = () => { const wasSelecting = selecting; selecting = false; if (wasSelecting && !searchOpenRef.current && settingsRef.current.copyOnSelect) void copy() }
     element.addEventListener('pointerdown', startSelection)
     window.addEventListener('pointerup', finishSelection)
     const selectionSubscription = terminal.onSelectionChange(() => {
       setSelection(terminal.hasSelection())
       clearTimeout(selectionTimer)
-      if (!selecting && settingsRef.current.copyOnSelect) selectionTimer = window.setTimeout(() => { void copy() }, 180)
+      if (!selecting && !searchOpenRef.current && settingsRef.current.copyOnSelect) selectionTimer = window.setTimeout(() => { void copy() }, 180)
     })
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown' || composing(event)) return true
       const mac = window.novaSettings?.initial.platform === 'darwin'
       const primary = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       const key = event.key.toLowerCase()
+      if (primary && !event.altKey && !event.shiftKey && key === 'f') {
+        event.preventDefault(); searchOpenRef.current = true; setSearchAddon(search); return false
+      }
       if (primary && !event.altKey && key === 'c' && (event.shiftKey || terminal.hasSelection())) {
         event.preventDefault(); void copy(); return false
       }
@@ -204,7 +224,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           setHostKey(null)
           setSession({ phase: 'running', detail: target.kind === 'ssh' ? `SSH · ${target.host}:${target.port}` : target.cwd ?? '本地会话', shell: message.shell })
           fitTerminal()
-          if (activeRef.current && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) terminal.focus()
+          if (activeRef.current && !searchOpenRef.current && !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) terminal.focus()
           break
         case 'output':
           // Confirm UTF-16 code units only after xterm has consumed the chunk.
@@ -223,6 +243,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     }, window.novaTerminal)
     controls.current = {
       terminal,
+      search,
       fit: scheduleFit,
       trust: (key, accept) => {
         send({ type: 'host-key-response', fingerprint: key.fingerprint, accept })
@@ -257,7 +278,8 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     if (!active) return
     const frame = requestAnimationFrame(() => {
       controls.current?.fit()
-      controls.current?.terminal.focus()
+      if (searchOpenRef.current) container.current?.closest('section')?.querySelector<HTMLInputElement>('[role="search"] input')?.focus()
+      else controls.current?.terminal.focus()
     })
     return () => cancelAnimationFrame(frame)
   }, [active])
@@ -285,6 +307,10 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
+      {searchAddon && <TerminalSearch search={searchAddon} onClear={clearSearch} onClose={() => {
+        clearSearch()
+        searchOpenRef.current = false; setSearchAddon(null); controls.current?.terminal.focus()
+      }} />}
       <AlertDialog open={pastePreview !== null} onOpenChange={(open) => { if (!open) pasteApproval.current?.(false) }}>
         <AlertDialogContent onEscapeKeyDown={(event) => { if (composing(event)) event.preventDefault() }}>
           <AlertDialogHeader><AlertDialogTitle>确认多行粘贴</AlertDialogTitle><AlertDialogDescription>即将粘贴 {pastePreview?.lines} 行、{pastePreview?.length} 个字符，可能执行多条命令。</AlertDialogDescription></AlertDialogHeader>
@@ -317,6 +343,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           <ContextMenuItem disabled={session.phase !== 'running'} onSelect={() => pasteAction.current()}>粘贴</ContextMenuItem>
           <ContextMenuItem onSelect={() => controls.current?.terminal.selectAll()}>全选</ContextMenuItem>
         </ContextMenuGroup><ContextMenuSeparator /><ContextMenuGroup>
+          <ContextMenuItem onSelect={() => { searchOpenRef.current = true; setSearchAddon(controls.current?.search ?? null) }}>搜索</ContextMenuItem>
           <ContextMenuItem onSelect={() => { clearSearch(); controls.current?.terminal.clear() }}>清屏</ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuContent></ContextMenu>

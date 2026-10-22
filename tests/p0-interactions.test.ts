@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createExitCoordinator } from '../src/main/exit-coordinator.ts'
-import { workspaceKey, activePhase, type KeyInput } from '../src/shared/terminal-interactions.ts'
+import { workspaceKey, externalUrl, activePhase, type KeyInput } from '../src/shared/terminal-interactions.ts'
 import { initialTerminalTabs, terminalTabsReducer } from '../src/renderer/src/lib/terminal-tabs.ts'
 
 test('exit confirmation deduplicates, ignores stale replies, survives human thinking time and supports cancellation', () => {
@@ -47,6 +47,14 @@ test('workspace shortcuts preserve shell combinations and ignore IME', () => {
   assert.equal(workspaceKey(key('Tab', { keyCode: 229 }), false), null)
   assert.equal(workspaceKey(key('Tab', { altKey: true }), false), null)
   assert.ok(activePhase('verifying')); assert.equal(activePhase('error'), false)
+})
+
+
+test('external links reject protocols, credentials, controls, invalid hosts and excessive lengths', () => {
+  assert.equal(externalUrl('https://example.com/path?q=1'), 'https://example.com/path?q=1')
+  assert.equal(externalUrl('http://[::1]:80/'), 'http://[::1]/')
+  for (const value of [null, '', 'file:///tmp/x', 'javascript:alert(1)', 'mailto:a@b.com', 'https://u:p@example.com',
+    'https://example.com\n', ' https://example.com', 'https://bad host', 'https://', 'https://.', 'https://a..b', 'https://-invalid.example', 'https://example.com\\x', `https://example.com/${'x'.repeat(2048)}`]) assert.equal(externalUrl(value), null)
 })
 
 

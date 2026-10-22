@@ -1,14 +1,14 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, utilityProcess } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, shell, utilityProcess } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, EXIT_CHANNELS } from '../shared/desktop-api.ts'
+import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, LINK_CHANNEL, EXIT_CHANNELS } from '../shared/desktop-api.ts'
 import { createCredentialStore } from './credential-store.ts'
 import { parseLocalDirectory } from '../shared/terminal-protocol.ts'
 import { APP_URL, DEV_URL, assetPath, trustedFrame, windowAction } from './security.ts'
 import { createDesktopSessions } from './sessions.ts'
 import { createSettingsStore } from './settings-store.ts'
 import type { Platform, SettingsSnapshot } from '../shared/settings.ts'
-import { MAX_COPY, MAX_PASTE } from '../shared/terminal-interactions.ts'
+import { MAX_COPY, MAX_PASTE, externalUrl } from '../shared/terminal-interactions.ts'
 import { createExitCoordinator } from './exit-coordinator.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
@@ -108,6 +108,12 @@ void app.whenReady().then(async () => {
     return settingsSnapshot()
   })
   nativeTheme.on('updated', publishSettings)
+  ipcMain.handle(LINK_CHANNEL, async (event, raw: unknown) => {
+    authorize(event)
+    const url = externalUrl(raw)
+    if (!url) throw new Error('仅允许有效的 http/https 链接。')
+    try { await shell.openExternal(url) } catch { throw new Error('无法打开系统浏览器。') }
+  })
   ipcMain.handle(EXIT_CHANNELS.reply, (event, id: unknown, action: unknown) => {
     authorize(event)
     if (typeof id !== 'number' || !Number.isSafeInteger(id) || !['ack', 'cancel', 'exit'].includes(String(action))) throw new Error('无效的退出响应。')
