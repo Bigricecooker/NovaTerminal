@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { ChevronDownIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, FolderInputIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, TerminalIcon, TrashIcon, XIcon, DownloadIcon, UploadIcon } from 'lucide-react'
 import { cn } from 'cn'
 import { AssetCreateDialog } from '@/components/asset-create-dialog'
@@ -30,6 +30,14 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
   const [query, setQuery] = useState('')
   const [searchCollapsed, setSearchCollapsed] = useState(new Set<string>())
   const [error, setError] = useState('')
+  const recovery = useRef<Promise<string | null> | null>(null)
+  useEffect(() => {
+    if (initial.error || recovery.current) return
+    recovery.current = window.novaCredentials
+      ? window.novaCredentials.recover(JSON.stringify({ version: 1, assets: initial.assets })).then(() => null, () => '认证存储恢复失败，请检查本机存储权限后刷新。')
+      : Promise.resolve('认证存储服务不可用，请通过桌面应用重新打开。')
+    void recovery.current.then((failure) => { if (failure) setError(failure) })
+  }, [initial])
   const [status, setStatus] = useState('')
   const [transferBusy, setTransferBusy] = useState(false)
   const [preview, setPreview] = useState<{ data: ImportPreview; original: Asset[] } | null>(null)
@@ -86,6 +94,9 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
     const next = appendAsset(assets, draft, newId)
     if (!next) return `无法保存，请检查所属分组和配置；资产最多 ${MAX_ASSETS} 项。`
     if (draft.kind === 'connection') {
+      if (initial.error) return initial.error
+      const recoveryFailure = await recovery.current
+      if (recoveryFailure || !recovery.current) return recoveryFailure ?? '认证存储恢复尚未完成，请刷新后重试。'
       if (!ssh || !window.novaCredentials) return '无法保存 SSH 认证信息，请通过桌面应用重新添加连接。'
       try { await window.novaCredentials.save(newId, ssh.options) }
       catch { return '无法安全保存 SSH 认证信息，请检查系统密钥库是否可用及本机存储权限。' }
@@ -111,6 +122,9 @@ export function AssetSidebar({ atLimit, onConnect, onOpenLocal, onAssetsChange }
     const next = editConnection(assets, editing.id, updated)
     if (!next) return '无法保存，请检查名称、所属分组和连接配置。'
     if (options && reference) {
+      if (initial.error) return initial.error
+      const recoveryFailure = await recovery.current
+      if (recoveryFailure || !recovery.current) return recoveryFailure ?? '认证存储恢复尚未完成，请刷新后重试。'
       if (!window.novaCredentials) return '无法保存 SSH 认证信息，请通过桌面应用编辑连接。'
       try { await window.novaCredentials.save(reference, options) }
       catch { return '无法安全保存 SSH 认证信息，请检查系统密钥库是否可用及本机存储权限。' }

@@ -1,6 +1,7 @@
 import { linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { parseAssetDocument } from '../shared/assets.ts'
 import { credentialId, parseSshOptions, type SavedSshConnection, type SshOptions } from '../shared/terminal-protocol.ts'
 
 export type CredentialProtector = { available: () => boolean; encrypt: (value: string) => Buffer; decrypt: (value: Buffer) => string }
@@ -14,6 +15,24 @@ export function createCredentialStore(directory: string, protector: CredentialPr
   const file = (id: unknown) => { if (!credentialId(id)) throw new Error('无效的 SSH 连接引用。'); return join(directory, `asset-${id}.bin`) }
   const available = () => { if (!protector.available()) throw new Error(UNAVAILABLE) }
   return {
+    recover(document: unknown): void {
+      const assets = parseAssetDocument(document)
+      if (!assets) throw new Error('资产配置无效，未清理认证信息。')
+      const referenced = new Set(assets.filter((asset) => asset.kind === 'connection').map((asset) => asset.credentialId ?? asset.id))
+      try {
+        let names: string[]
+        try { names = readdirSync(directory) }
+        catch (error) { if (hasCode(error, 'ENOENT')) return; throw error }
+        for (const name of names) {
+          const record = /^asset-([a-zA-Z0-9_-]{1,64})\.bin$/.exec(name)
+          const temporary = /^asset-[a-zA-Z0-9_-]{1,64}\.bin\.[a-f0-9-]{36}\.tmp$/.test(name)
+          if (!(record?.[1] && !referenced.has(record[1])) && !temporary) continue
+          const file = join(directory, name)
+          const info = lstatSync(file)
+          if (info.isFile() && !info.isSymbolicLink()) unlinkSync(file)
+        }
+      } catch { throw new Error('认证存储恢复失败，请检查本机存储权限后刷新。') }
+    },
     save: (id: unknown, raw: unknown) => {
       const target = file(id)
       const options = parseSshOptions(raw)

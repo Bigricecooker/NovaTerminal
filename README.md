@@ -50,7 +50,7 @@ Shell 和默认目录只影响新会话，本地连接自带目录优先。Windo
 
 Windows / Linux 的 Ctrl+C 在有选区时复制，没有选区时交给 Shell。右键菜单提供复制、粘贴、全选、清屏和搜索；清屏清理本地显示与选区，不发送远端命令。复制最多 1,048,576 个 UTF-16 单元，粘贴最多 65,536 个；超限会提示，不因此关闭会话。可开启选中即复制和多行粘贴确认，确认框只显示行数与长度。
 
-搜索支持大小写和正则、Enter / Shift+Enter 前后查找、Esc 关闭，选中并滚动到当前匹配项，不显示全部匹配高亮。仅 http/https 链接可交给系统浏览器；启用终端鼠标报告时需按 Ctrl / Cmd 点击。全局快捷键避开表单、弹窗及输入法合成过程。
+搜索支持大小写和正则、Enter / Shift+Enter 前后查找、Esc 关闭，选中并滚动到当前匹配项，不显示全部匹配高亮。正则超时会提示简化表达式，缓冲区过大时提示缩小回滚行数，之后可继续搜索。仅 http/https 链接可交给系统浏览器；启用终端鼠标报告时需按 Ctrl / Cmd 点击。全局快捷键避开表单、弹窗及输入法合成过程。
 
 ### SSH 连接
 
@@ -95,6 +95,7 @@ SSH 连接悬停提示显示“用户名@主机”（主机可为域名或 IP）
 | `npm run test:sidebar` | 验证资产展开、拖放、右键菜单、保存失败及会话拖动 |
 | `npm run test:p0` | 验证设置、搜索、剪贴板、关闭 / 重连及配置导入导出 |
 | `npm run test:acceptance` | 验证拖选复制、Ctrl+C 中断、搜索、链接点击及 Shell 边界 |
+| `npm run test:recovery` | 验证单实例、认证保存中断恢复和正则超时后继续使用 |
 | `npm run test:package` | 在独立临时目录验证 Windows exe、PTY、主题与退出清理 |
 
 在 Windows x64 上，运行 `npm run package` 后打开 `release/NovaTerminal-win32-x64/NovaTerminal.exe`。请保留整个目录，不能只复制可执行文件；此目录包内置 Electron / Node.js，运行时无需系统 Node.js 或 Vite。

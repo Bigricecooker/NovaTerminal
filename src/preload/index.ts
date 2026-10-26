@@ -91,6 +91,9 @@ contextBridge.exposeInMainWorld('novaWindow', windowApi)
 const directoryApi: DesktopDirectoryApi = { pick: () => ipcRenderer.invoke(DIRECTORY_CHANNEL) }
 contextBridge.exposeInMainWorld('novaDirectories', directoryApi)
 const credentialApi: DesktopCredentialApi = {
+  recover: (document) => typeof document === 'string' && document.length <= 524_288
+    ? ipcRenderer.invoke(CREDENTIAL_CHANNELS.recover, document).catch((error: unknown) => publicFailure(error, '认证存储恢复失败，请检查本机存储权限后刷新。'))
+    : Promise.reject(new Error('资产配置无效，未清理认证信息。')),
   save: (id, options) => {
     const raw = JSON.stringify(options)
     if (raw.length > 262_144) return Promise.reject(new Error('SSH credential size limit exceeded'))

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ArrowUpIcon, ArrowDownIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -6,34 +6,39 @@ import { Switch } from '@/components/ui/switch'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { composing } from '@shared/terminal-interactions'
 import type { SearchAddon } from '@xterm/addon-search'
+import type { createRegexSearch } from '@/lib/regex-search'
 
-export function TerminalSearch({ search, onClear, onClose }: { search: SearchAddon | undefined; onClear: () => void; onClose: () => void }) {
+export function TerminalSearch({ search, regexSearch, onClear, onClose }: { search: SearchAddon; regexSearch: ReturnType<typeof createRegexSearch>; onClear: () => void; onClose: () => void }) {
   const [query, setQuery] = useState('')
   const [regex, setRegex] = useState(false)
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [message, setMessage] = useState('')
   const id = useId()
   const composingRef = useRef(false)
-  const find = (previous = false) => {
+  const request = useRef(0)
+  const find = useCallback((previous = false, incremental = false) => {
     if (!search || composingRef.current) return
+    const current = ++request.current
+    regexSearch.cancel()
     if (!query) { onClear(); setMessage(''); return }
-    try { if (regex) new RegExp(query) } catch { setMessage('正则表达式无效'); return }
+    if (regex) {
+      search.clearDecorations()
+      setMessage('正在搜索…')
+      void regexSearch.find(query, caseSensitive, previous, incremental).then((result) => {
+        if (request.current === current) setMessage(result)
+      })
+      return
+    }
     try {
-      const matched = previous ? search.findPrevious(query, { regex, caseSensitive }) : search.findNext(query, { regex, caseSensitive })
+      const matched = previous ? search.findPrevious(query, { caseSensitive, incremental }) : search.findNext(query, { caseSensitive, incremental })
       setMessage(matched ? '已选中匹配项' : '没有匹配项')
     } catch { setMessage('无法搜索当前缓冲区') }
-  }
+  }, [search, regexSearch, query, regex, caseSensitive, onClear])
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!search || composingRef.current) return
-      if (!query) { onClear(); setMessage(''); return }
-      try {
-        if (regex) new RegExp(query)
-        setMessage(search.findNext(query, { regex, caseSensitive, incremental: true }) ? '已选中匹配项' : '没有匹配项')
-      } catch { setMessage('正则表达式无效') }
-    }, 150)
-    return () => clearTimeout(timer)
-  }, [query, regex, caseSensitive, search, onClear])
+    const sequence = request
+    const timer = setTimeout(() => find(false, true), 150)
+    return () => { clearTimeout(timer); sequence.current++; regexSearch.cancel() }
+  }, [find, regexSearch])
   return <div className="flex h-20 shrink-0 flex-col justify-center gap-1 border-b p-2" role="search" aria-label="搜索当前终端" onKeyDown={(event) => {
     if (composing(event.nativeEvent)) return
     if (event.key === 'Escape') { event.preventDefault(); onClose() }

@@ -104,3 +104,33 @@ test('a full asset vault reserves one bounded revision and retains the original 
   assert.equal(readdirSync(directory).length, 500)
   assert.deepEqual(store.load({ ...reference, assetId: 'revision-committed' }), replacement)
 })
+
+test('recovery uses committed references to reclaim an interrupted revision at full capacity', (t) => {
+  const { store, directory, protector } = fixture(t)
+  const assets = Array.from({ length: 500 }, (_, index) => ({ kind: 'connection', id: `server-${index}`, name: `Server ${index}`, parentId: null, host: options.host, port: options.port, username: options.username }))
+  for (const asset of assets) store.save(asset.id, options)
+  store.save('interrupted', options)
+  const restored = createCredentialStore(directory, protector)
+  restored.recover({ version: 1, assets })
+  assert.equal(readdirSync(directory).length, 500)
+  assert.deepEqual(restored.load({ ...reference, assetId: 'server-0' }), options)
+  restored.save('committed', options)
+  restored.recover({ version: 1, assets: assets.map((asset, index) => index === 0 ? { ...asset, credentialId: 'committed' } : asset) })
+  assert.equal(readdirSync(directory).length, 500)
+  assert.deepEqual(restored.load({ ...reference, assetId: 'committed' }), options)
+  assert.throws(() => restored.load({ ...reference, assetId: 'server-0' }), /缺失/)
+})
+
+test('recovery rejects invalid documents before deletion and preserves unrelated files', (t) => {
+  const { store, directory, lock } = fixture(t)
+  store.save('orphan', options)
+  for (const document of [null, { version: 2, assets: [] }, { version: 1, assets: [{ id: 'invalid' }] }]) {
+    assert.throws(() => store.recover(document), /资产配置无效/)
+    assert.deepEqual(readdirSync(directory), ['asset-orphan.bin'])
+  }
+  writeFileSync(join(directory, 'asset-orphan.bin.12345678-1234-1234-1234-123456789abc.tmp'), 'ciphertext')
+  writeFileSync(join(directory, 'unrelated.bin'), 'retain')
+  lock()
+  store.recover({ version: 1, assets: [] })
+  assert.deepEqual(readdirSync(directory), ['unrelated.bin'])
+})

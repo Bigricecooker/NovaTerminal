@@ -46,8 +46,8 @@ export const WINDOW_CHANNELS = { action: 'window:action', state: 'window:state',
 
 export const DIRECTORY_CHANNEL = 'directory:pick'
 export type DesktopDirectoryApi = { pick: () => Promise<string | null> }
-export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credential:remove' } as const
-export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void> }
+export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credential:remove', recover: 'credential:recover' } as const
+export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void>; recover: (document: string) => Promise<void> }
 
 declare global {
   interface Window { novaConnections?: DesktopTransferApi; novaLinks?: DesktopLinkApi; novaExit?: DesktopExitApi; novaClipboard?: DesktopClipboardApi; novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }

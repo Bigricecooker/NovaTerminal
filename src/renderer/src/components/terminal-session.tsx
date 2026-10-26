@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { TerminalSearch } from '@/components/terminal-search'
+import { createRegexSearch } from '@/lib/regex-search'
 import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,7 +21,8 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 
 type Session = { phase: Phase; detail: string; shell: string }
 type HostKey = Extract<ServerMessage, { type: 'host-key' }>
-type Controls = { terminal: Terminal; search: SearchAddon; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
+type SearchControls = { search: SearchAddon; regexSearch: ReturnType<typeof createRegexSearch> }
+type Controls = SearchControls & { terminal: Terminal; fit: () => void; trust: (key: HostKey, accept: boolean) => void }
 
 function terminalTheme(): ITheme {
   const style = getComputedStyle(document.documentElement)
@@ -48,7 +50,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   useEffect(() => { settingsRef.current = settings }, [settings])
   const [notice, setNotice] = useState('')
   const [selection, setSelection] = useState(false)
-  const [searchAddon, setSearchAddon] = useState<SearchAddon | null>(null)
+  const [searchAddon, setSearchAddon] = useState<SearchControls | null>(null)
   const searchOpenRef = useRef(false)
   const [pastePreview, setPastePreview] = useState<{ lines: number; length: number } | null>(null)
   const pasteApproval = useRef<((accept: boolean) => void) | null>(null)
@@ -57,7 +59,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   const [session, setSession] = useState<Session>({ phase: 'connecting', detail: target.kind === 'ssh' ? '正在连接 SSH 服务器…' : '正在启动本地 Shell…', shell: '' })
   const [hostKey, setHostKey] = useState<HostKey | null>(null)
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null)
-  const clearSearch = useCallback(() => { controls.current?.search.clearDecorations(); controls.current?.terminal.clearSelection() }, [])
+  const clearSearch = useCallback(() => { controls.current?.regexSearch.cancel(); controls.current?.search.clearDecorations(); controls.current?.terminal.clearSelection() }, [])
   useEffect(() => { onPhase(session.phase) }, [onPhase, session.phase])
 
   useEffect(() => {
@@ -74,6 +76,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     terminal.open(element)
     const search = new SearchAddon()
     terminal.loadAddon(search)
+    const regexSearch = createRegexSearch(terminal)
     const openLink = (event: MouseEvent, uri: string) => {
       if (event.button !== 0 || !externalUrl(uri)) return
       const modifier = window.novaSettings?.initial.platform === 'darwin' ? event.metaKey : event.ctrlKey
@@ -141,7 +144,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
       const primary = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       const key = event.key.toLowerCase()
       if (primary && !event.altKey && !event.shiftKey && key === 'f') {
-        event.preventDefault(); searchOpenRef.current = true; setSearchAddon(search); return false
+        event.preventDefault(); searchOpenRef.current = true; setSearchAddon({ search, regexSearch }); return false
       }
       if (primary && !event.altKey && key === 'c' && (event.shiftKey || terminal.hasSelection())) {
         event.preventDefault(); void copy(); return false
@@ -244,6 +247,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     controls.current = {
       terminal,
       search,
+      regexSearch,
       fit: scheduleFit,
       trust: (key, accept) => {
         send({ type: 'host-key-response', fingerprint: key.fingerprint, accept })
@@ -268,6 +272,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
       window.removeEventListener('resize', scheduleFit)
       transport.close()
       input.dispose()
+      regexSearch.cancel()
       terminal.dispose()
       controls.current = null
     }
@@ -307,7 +312,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
-      {searchAddon && <TerminalSearch search={searchAddon} onClear={clearSearch} onClose={() => {
+      {searchAddon && <TerminalSearch {...searchAddon} onClear={clearSearch} onClose={() => {
         clearSearch()
         searchOpenRef.current = false; setSearchAddon(null); controls.current?.terminal.focus()
       }} />}
@@ -343,7 +348,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           <ContextMenuItem disabled={session.phase !== 'running'} onSelect={() => pasteAction.current()}>粘贴</ContextMenuItem>
           <ContextMenuItem onSelect={() => controls.current?.terminal.selectAll()}>全选</ContextMenuItem>
         </ContextMenuGroup><ContextMenuSeparator /><ContextMenuGroup>
-          <ContextMenuItem onSelect={() => { searchOpenRef.current = true; setSearchAddon(controls.current?.search ?? null) }}>搜索</ContextMenuItem>
+          <ContextMenuItem onSelect={() => { const current = controls.current; if (current) { searchOpenRef.current = true; setSearchAddon({ search: current.search, regexSearch: current.regexSearch }) } }}>搜索</ContextMenuItem>
           <ContextMenuItem onSelect={() => { clearSearch(); controls.current?.terminal.clear() }}>清屏</ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuContent></ContextMenu>

@@ -16,12 +16,15 @@ import { parseAssetDocument } from '../shared/assets.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 app.setName('NovaTerminal')
+const primaryInstance = app.requestSingleInstanceLock()
+if (!primaryInstance) app.exit(0)
 const dev = !app.isPackaged && process.env.NOVA_DEV_SERVER === DEV_URL
 const rendererUrl = dev ? DEV_URL : APP_URL
 let window: BrowserWindow | null = null
 let quitting = false
 let pickingDirectory = false
 let transferring = false
+let credentialsRecovered = false
 const platform: Platform = process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux'
 let settings: ReturnType<typeof createSettingsStore>
 function settingsSnapshot(): SettingsSnapshot {
@@ -86,7 +89,7 @@ async function createWindow() {
   current.webContents.on('will-navigate', (event) => { if (event.url !== rendererUrl) event.preventDefault() })
   current.webContents.on('will-attach-webview', (event) => event.preventDefault())
   current.webContents.on('render-process-gone', () => { sessions.closeOwner(current.webContents.id); exit.unavailable() })
-  current.webContents.on('did-start-loading', () => sessions.closeOwner(current.webContents.id))
+  current.webContents.on('did-start-loading', () => { credentialsRecovered = false; sessions.closeOwner(current.webContents.id) })
   current.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
@@ -98,7 +101,14 @@ async function createWindow() {
   await current.loadURL(rendererUrl)
 }
 
-void app.whenReady().then(async () => {
+app.on('second-instance', () => {
+  if (!window || window.isDestroyed()) return
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+})
+
+if (primaryInstance) void app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   settings = createSettingsStore(join(app.getPath('userData'), 'settings', dev ? 'development.json' : 'desktop.json'), platform)
   ipcMain.on(SETTINGS_CHANNELS.initial, (event) => {
@@ -185,7 +195,7 @@ void app.whenReady().then(async () => {
     if (typeof text !== 'string' || text.length > MAX_COPY) throw new Error('复制内容超过 1 MiB 上限。')
     await clipboard.writeText(text)
   })
-  const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'"
+  const csp = "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'"
   protocol.handle('app', async (request) => {
     const file = assetPath(join(__dirname, '../../dist'), request.url)
     if (!file || request.method !== 'GET') return new Response(null, { status: 403 })
@@ -201,10 +211,21 @@ void app.whenReady().then(async () => {
   ipcMain.handle(DESKTOP_CHANNELS.close, (event, id: unknown) => sessions.close(authorize(event), id))
   ipcMain.handle(CREDENTIAL_CHANNELS.save, (event, id: unknown, raw: unknown) => {
     authorize(event)
+    if (!credentialsRecovered) throw new Error('认证存储恢复尚未完成，请刷新后重试。')
     if (typeof raw !== 'string' || raw.length > 262_144) throw new Error('无效的 SSH 认证配置。')
     let options: unknown
     try { options = JSON.parse(raw) } catch { throw new Error('无效的 SSH 认证配置。') }
     credentialStore().save(id, options)
+  })
+  ipcMain.handle(CREDENTIAL_CHANNELS.recover, (event, raw: unknown) => {
+    authorize(event)
+    // One recovery per loaded document, before any new credential can be staged.
+    if (credentialsRecovered) return
+    if (typeof raw !== 'string' || raw.length > 524_288) throw new Error('资产配置无效，未清理认证信息。')
+    let document: unknown
+    try { document = JSON.parse(raw) } catch { throw new Error('资产配置无效，未清理认证信息。') }
+    credentialStore().recover(document)
+    credentialsRecovered = true
   })
   ipcMain.handle(CREDENTIAL_CHANNELS.remove, (event, ids: unknown) => {
     authorize(event)
