@@ -108,7 +108,7 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
           ]
           break
         }
-        case 'input': pty?.write(message.data); break
+        case 'input': pty?.write(message.binary ? Buffer.from(message.data, 'latin1') : message.data); break
         case 'resize': pty?.resize(message.cols, message.rows); break
         case 'clear': pty?.clear(); break
         case 'ack':

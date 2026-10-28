@@ -21,7 +21,7 @@ export function credentialId(value: unknown): value is string {
 export type ClientMessage =
   | { type: 'start'; cols: number; rows: number; ssh?: SshOptions; savedSsh?: SavedSshConnection; cwd?: string; shell?: Shell }
   | { type: 'host-key-response'; fingerprint: string; accept: boolean }
-  | { type: 'input'; data: string }
+  | { type: 'input'; data: string; binary?: true }
   | { type: 'resize'; cols: number; rows: number }
   | { type: 'ack'; count: number }
   | { type: 'clear' }
@@ -108,8 +108,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return dimension(value.cols, 500) && dimension(value.rows, 300)
         ? { type: value.type, cols: value.cols, rows: value.rows } : null
     case 'input':
-      return typeof value.data === 'string' && value.data.length > 0 && value.data.length <= MAX_INPUT
-        ? { type: 'input', data: value.data } : null
+      if (typeof value.data !== 'string' || !value.data.length || value.data.length > MAX_INPUT
+        || value.binary !== undefined && value.binary !== true
+        || value.binary === true && Array.from(value.data).some((char) => char.charCodeAt(0) > 255)) return null
+      return { type: 'input', data: value.data, ...(value.binary === true ? { binary: true } : {}) }
     case 'ack':
       return typeof value.count === 'number' && Number.isInteger(value.count) && value.count > 0 && value.count <= MAX_BUFFER
         ? { type: 'ack', count: value.count } : null

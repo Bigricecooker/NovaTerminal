@@ -186,6 +186,8 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(await evaluate('document.querySelector(\'[role="dialog"]\').getAttribute("data-state")'), 'open')
       await fs.writeFile(path.join(__dirname, '../test-results/add-connection.png'), (await window.webContents.capturePage()).toPNG())
       const hostKey = ssh2.utils.generateKeyPairSync('ed25519')
+      const sshInputBytes = []
+      let sshStream
       sshServer = new ssh2.Server({ hostKeys: [hostKey.private] }, (connection) => {
         sshConnections.add(connection)
         connection.on('error', () => {})
@@ -198,8 +200,9 @@ app.on('browser-window-created', (_event, window) => {
           session.on('pty', (acceptPty) => acceptPty())
           session.on('shell', (acceptShell) => {
             const stream = acceptShell()
+            sshStream = stream
             stream.on('error', () => {})
-            stream.on('data', (data) => stream.write(`ECHO:${data.toString('utf8')}`))
+            stream.on('data', (data) => { sshInputBytes.push(data); stream.write(`ECHO:${data.toString('utf8')}`) })
           })
         }))
       })
@@ -224,6 +227,43 @@ app.on('browser-window-created', (_event, window) => {
       await wait('window.__smoke.output.includes("🚀中文_NOVA_PASTE_OK")')
       await wait(`document.querySelector('[role="tabpanel"][data-state="active"] .xterm-rows')?.textContent.includes('🚀中文_NOVA_PASTE_OK')`)
       await fs.writeFile(path.join(__dirname, '../test-results/electron-review-unicode.png'), (await window.webContents.capturePage()).toPNG())
+      const originalReadText = clipboard.readText
+      const pasteSynthetic = () => evaluate(`document.querySelector('[role="tabpanel"][data-state="active"] .xterm-helper-textarea').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true }))`)
+      try {
+        const beforeRejectedPaste = Buffer.concat(sshInputBytes).length
+        clipboard.readText = () => '\x01'.repeat(65_536)
+        await pasteSynthetic()
+        await wait('document.body.textContent.includes("输入超过缓冲限制")')
+        await delay(100)
+        assert.equal(Buffer.concat(sshInputBytes).length, beforeRejectedPaste, 'Rejected paste must send no partial input')
+        clipboard.readText = () => 'NOVA_AFTER_REJECT'
+        await pasteSynthetic()
+        await wait('window.__smoke.output.includes("ECHO:NOVA_AFTER_REJECT")')
+        assert.equal(await evaluate('window.__smoke.events.some(e => e.id === window.__smoke.ssh && (e.closed || e.message?.type === "error"))'), false)
+      } finally { clipboard.readText = originalReadText }
+      window.setSize(1400, 800)
+      await wait(`Number(document.querySelector('[role="tabpanel"][data-state="active"] footer span[aria-label]')?.getAttribute('aria-label').split(' ')[0]) > 100`)
+      sshStream.write('\x1b[?1000h')
+      await wait('window.__smoke.output.includes("\\x1b[?1000h")')
+      await delay(150)
+      for (const column of [7, 100]) {
+        const point = await evaluate(`(() => {
+          const panel = document.querySelector('[role="tabpanel"][data-state="active"]');
+          const r = panel.querySelector('.xterm-screen').getBoundingClientRect();
+          const size = panel.querySelector('footer span[aria-label]').getAttribute('aria-label').split(' ');
+          return { x: Math.round(r.x + (${column} - .5) * r.width / Number(size[0])), y: Math.round(r.y + 1.5 * r.height / Number(size[2])) };
+        })()`)
+        const beforeMouse = Buffer.concat(sshInputBytes).length
+        window.focus()
+        window.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point })
+        window.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point })
+        const until = Date.now() + 3_000
+        while (Buffer.concat(sshInputBytes).length < beforeMouse + 12) { assert.ok(Date.now() < until, 'Legacy mouse input did not reach SSH'); await delay(20) }
+        assert.deepEqual(Buffer.concat(sshInputBytes).subarray(beforeMouse), Buffer.from([27, 91, 77, 32, column + 32, 34, 27, 91, 77, 35, column + 32, 34]))
+      }
+      sshStream.write('\x1b[?1000l')
+      await delay(100)
+      window.setSize(1000, 700)
       // Exercise the native picker IPC through its production handler; only the OS dialog is stubbed in this test process.
       assert.equal(await evaluate('Boolean(document.querySelector(\'header button[aria-label="连接 SSH 服务器"]\'))'), false)
       const beforeLocal = await evaluate('localStorage.getItem("novaterminal.assets.v1")')

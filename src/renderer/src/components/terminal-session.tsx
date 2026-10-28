@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { SSH_START_TIMEOUT, type ClientMessage, type ServerMessage } from '@shared/terminal-protocol'
-import { terminalInputChunks } from '@shared/terminal-input'
 import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 import { FONT_STACKS, type Settings } from '@shared/settings'
@@ -197,18 +196,14 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     observer.observe(element)
     void document.fonts.ready.then(scheduleFit)
     window.addEventListener('resize', scheduleFit)
-    const input = terminal.onData((data) => {
+    const sendInput = (data: string, binary?: true) => {
       if (!ready || ended) return
-      // Bound a single paste so it cannot enqueue an unlimited amount of input.
-      // Bracketed paste adds 12 units around a bounded clipboard payload.
-      if (data.length > MAX_PASTE + 12 || transport.buffered() + data.length > 131_072) {
+      if (!transport.sendInput(data, binary)) {
         setNotice('输入超过缓冲限制，请稍后分段粘贴。')
-        return
       }
-      for (const chunk of terminalInputChunks(data)) {
-        send({ type: 'input', data: chunk })
-      }
-    })
+    }
+    const input = terminal.onData((data) => sendInput(data))
+    const binaryInput = terminal.onBinary((data) => sendInput(data, true))
     timeout = window.setTimeout(() => stop('error', '终端连接超时，请检查服务和网络后新建终端。'), target.kind === 'ssh' ? SSH_START_TIMEOUT + 5_000 : 12_000)
     const receiveMessage = (message: ServerMessage) => {
       if (disposed || ended) return
@@ -272,6 +267,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
       window.removeEventListener('resize', scheduleFit)
       transport.close()
       input.dispose()
+      binaryInput.dispose()
       regexSearch.cancel()
       terminal.dispose()
       controls.current = null

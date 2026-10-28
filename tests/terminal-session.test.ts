@@ -53,6 +53,11 @@ test('desktop sessions reject malformed messages and input before start', async 
 test('runs a real shell with Unicode, ANSI output, resize, and exit code', { timeout: 20_000 }, async (t) => {
   const client = await connect(t)
   await client.start()
+  client.send({ type: 'input', binary: true, data: process.platform === 'win32'
+    ? "[Console]::WriteLine(('BYTE_' + '\xc3\xa9'))\r"
+    : "printf 'BYTE_%s\\n' '\xc3\xa9'\r" })
+  await client.wait(() => client.output().includes('BYTE_é'))
+  assert.ok(!client.output().includes('BYTE_Ã©'), 'PTY must receive the original bytes without UTF-8 encoding them again')
   client.send({ type: 'clear' })
   client.send({ type: 'resize', cols: 110, rows: 32 })
   const command = process.platform === 'win32'

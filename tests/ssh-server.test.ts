@@ -33,6 +33,7 @@ async function fixture(t: TestContext) {
   const channels: ServerChannel[] = []
   const sizes: { cols: number; rows: number }[] = []
   const inputs: string[] = []
+  const inputBytes: Buffer[] = []
   let authentications = 0
   let closedChannels = 0
   const startRemote = async (key = hostKey.private, port = 0) => {
@@ -61,6 +62,7 @@ async function fixture(t: TestContext) {
           channel.on('error', () => {})
           channel.on('close', () => { closedChannels++ })
           channel.on('data', (data: Buffer) => {
+            inputBytes.push(data)
             const text = data.toString('utf8')
             inputs.push(text)
             channel.write(`ECHO:${text}`)
@@ -103,7 +105,7 @@ async function fixture(t: TestContext) {
       },
     }
   }
-  return { ...first, connect, startRemote, directory, channels, sizes, inputs, authentications: () => authentications, closedChannels: () => closedChannels, connections: () => connections.size }
+  return { ...first, connect, startRemote, directory, channels, sizes, inputs, inputBytes, authentications: () => authentications, closedChannels: () => closedChannels, connections: () => connections.size }
 }
 
 test('SSH first trust precedes authentication; shell supports Unicode, ANSI, resize and exit', { timeout: 20_000 }, async (t) => {
@@ -158,6 +160,17 @@ test('SSH receives pasted emoji intact across terminal input chunk boundaries', 
   for (const data of terminalInputChunks(text)) client.send({ type: 'input', data })
   await wait(() => server.inputs.join('').length >= text.length)
   assert.ok(server.inputs.join('') === text, 'SSH must receive the original Unicode input without replacement characters')
+})
+
+test('SSH receives legacy mouse reports as original bytes rather than UTF-8', { timeout: 15_000 }, async (t) => {
+  const server = await fixture(t)
+  const client = await server.connect()
+  await client.trust()
+  await client.ready()
+  const data = '\x1b[M \x84\xff'
+  client.send({ type: 'input', data, binary: true })
+  await wait(() => Buffer.concat(server.inputBytes).length >= data.length)
+  assert.deepEqual(Buffer.concat(server.inputBytes), Buffer.from([27, 91, 77, 32, 132, 255]))
 })
 
 test('trusted host reconnects with encrypted private key authentication', { timeout: 20_000 }, async (t) => {

@@ -131,12 +131,14 @@ export function createSshSession(
       }
       if (!channel) { fail('SSH 尚未连接，无法发送终端操作。'); return }
       switch (message.type) {
-        case 'input':
-          if (channel.writableLength + Buffer.byteLength(message.data) > 65_536) {
+        case 'input': {
+          const data = message.binary ? Buffer.from(message.data, 'latin1') : message.data
+          if (channel.writableLength + Buffer.byteLength(data) > 65_536) {
             fail('SSH 输入缓冲已满，会话已关闭。'); return
           }
-          channel.write(message.data)
+          channel.write(data)
           break
+        }
         case 'resize': channel.setWindow(message.rows, message.cols, 0, 0); break
         case 'clear': break // xterm clears locally; never inject commands into the remote Shell.
         case 'ack':

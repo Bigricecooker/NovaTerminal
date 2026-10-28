@@ -44,3 +44,12 @@ test('host trust responses require a complete SHA-256 fingerprint and a boolean 
   assert.equal(parseClientMessage(JSON.stringify({ type: 'host-key-response', fingerprint: 'bad', accept: true })), null)
   assert.equal(parseClientMessage(JSON.stringify({ type: 'host-key-response', fingerprint, accept: 'true' })), null)
 })
+
+test('binary input accepts only bounded byte strings and preserves its encoding flag', () => {
+  const input = { type: 'input', data: '\x1b[M \x84\xff', binary: true }
+  assert.deepEqual(parseClientMessage(JSON.stringify(input)), input)
+  assert.deepEqual(parseClientMessage(JSON.stringify({ type: 'input', data: '中文🚀' })), { type: 'input', data: '中文🚀' })
+  for (const patch of [{ data: '中文' }, { data: '🚀' }, { data: '' }, { data: 'x'.repeat(16_385) }, { binary: false }, { binary: 'true' }]) {
+    assert.equal(parseClientMessage(JSON.stringify({ ...input, ...patch })), null)
+  }
+})
