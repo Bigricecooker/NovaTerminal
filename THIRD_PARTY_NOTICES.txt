@@ -550,12 +550,12 @@ ws@8.22.0 — MIT
 Upstream: https://github.com/websockets/ws
 Full copyright and license: licenses/ws-LICENSE.txt
 
-Native and server dependencies are used by the local Node service, not bundled into the browser renderer.
+node-pty and ssh2 run in each session's Electron utility process, outside the renderer.
 
 ssh2@1.17.0 — MIT
 Upstream: https://github.com/mscdex/ssh2
 Full copyright and license: licenses/ssh2-LICENSE.txt
-Used only in the local Node service; optional native acceleration install scripts are disabled.
+Used in per-session Electron utility processes; optional native acceleration install scripts are disabled.
 
 ========================================================================
 @xterm/addon-search@0.16.0 — MIT
