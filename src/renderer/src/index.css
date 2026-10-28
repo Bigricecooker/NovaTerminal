@@ -5,6 +5,12 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Desktop panes own scrolling; fractional DPI sizes must not scroll the document. */
+html, body, #root {
+    height: 100%;
+    overflow: hidden;
+}
+
 .app-titlebar {
     height: 48px;
     -webkit-app-region: drag;
@@ -12,6 +18,14 @@
 }
 
 .app-titlebar-actions {
+    -webkit-app-region: no-drag;
+}
+
+/* Modal controls can overlap the frameless title bar's native drag region. */
+[data-slot="dialog-overlay"],
+[data-slot="dialog-content"],
+[data-slot="alert-dialog-overlay"],
+[data-slot="alert-dialog-content"] {
     -webkit-app-region: no-drag;
 }
 

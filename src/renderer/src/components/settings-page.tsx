@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { ArrowLeftIcon, PaletteIcon, TerminalIcon, PanelsTopLeftIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Separator } from '@/components/ui/separator'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -9,12 +11,20 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { parseSettings, platformShells, type Settings, type SettingsSnapshot } from '@shared/settings'
 import { composing } from '@shared/terminal-interactions'
 
-export function SettingsDialog({ snapshot, onClose, onSave }: {
+const sections = [
+  { value: 'appearance', label: '外观', description: '主题、字体与终端显示。', icon: PaletteIcon },
+  { value: 'terminal', label: '终端', description: '复制、粘贴与标签操作。', icon: TerminalIcon },
+  { value: 'sessions', label: '会话', description: 'Shell 与起始目录用于新会话。', icon: PanelsTopLeftIcon },
+] as const
+
+export function SettingsPage({ snapshot, onClose, onSave }: {
   snapshot: SettingsSnapshot; onClose: () => void; onSave: (values: Settings) => Promise<void>
 }) {
   const [draft, setDraft] = useState(snapshot.values)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [section, setSection] = useState('appearance')
+  const current = sections.find((item) => item.value === section) ?? sections[0]
   const patch = <K extends keyof Settings>(key: K, value: Settings[K]) => setDraft((current) => ({ ...current, [key]: value }))
   const toggle = (key: 'cursorBlink' | 'copyOnSelect' | 'confirmMultiline' | 'confirmClose' | 'confirmExit', label: string) => (
     <Field orientation="horizontal"><FieldLabel htmlFor={`setting-${key}`}>{label}</FieldLabel>
@@ -25,19 +35,33 @@ export function SettingsDialog({ snapshot, onClose, onSave }: {
       <Input id={`setting-${key}`} name={key} type="number" value={Number.isNaN(draft[key]) ? '' : draft[key]} min={min} max={max} step={step}
         onChange={(event) => patch(key, event.target.valueAsNumber)} required /></Field>
   )
-  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose() }}>
-    <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-xl" onEscapeKeyDown={(event) => { if (busy || composing(event)) event.preventDefault() }}>
-      <DialogHeader><DialogTitle>设置</DialogTitle><DialogDescription>保存后应用偏好；Shell 与起始目录用于新会话。</DialogDescription></DialogHeader>
-      <form className="flex min-h-0 flex-col gap-4" onSubmit={(event) => {
+  return <section className="flex min-h-0 flex-1" aria-label="设置" onKeyDown={(event) => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !busy && !composing(event.nativeEvent)) { event.preventDefault(); onClose() }
+  }}>
+    <Tabs orientation="vertical" value={section} onValueChange={setSection} className="min-h-0 flex-1 gap-0">
+      <aside className="flex w-40 shrink-0 flex-col gap-6 border-r bg-sidebar p-3 sm:w-56 sm:p-4">
+        <Button variant="ghost" className="justify-start" disabled={busy} onClick={onClose} autoFocus><ArrowLeftIcon data-icon="inline-start" />返回应用</Button>
+        <div className="flex flex-col gap-3">
+          <p className="px-3 text-sm text-muted-foreground">设置</p>
+          <TabsList className="w-full items-stretch gap-1" aria-label="设置分类">
+            {sections.map(({ value, label, icon: Icon }) => <TabsTrigger key={value} value={value} disabled={busy} className="h-10 flex-none justify-start px-3"><Icon />{label}</TabsTrigger>)}
+          </TabsList>
+        </div>
+      </aside>
+      <form className="flex min-h-0 min-w-0 flex-1 flex-col" onSubmit={(event) => {
         event.preventDefault()
         if (busy) return
         setError(''); setBusy(true)
         void Promise.resolve().then(() => onSave(parseSettings(draft, snapshot.platform))).then(onClose)
           .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : '无法保存设置。')).finally(() => setBusy(false))
       }}>
-        <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto px-1">
-          <FieldGroup className="min-w-0 [&_fieldset]:min-w-0">
-            <FieldSet><FieldLegend>外观</FieldLegend><FieldGroup>
+        <div className="flex shrink-0 flex-col gap-1 px-5 py-5 sm:px-8">
+          <h2 className="text-xl font-semibold">{current.label}</h2><p className="text-sm text-muted-foreground">{current.description}</p>
+        </div>
+        <Separator />
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-6 sm:px-8">
+          <TabsContent value="appearance" className="m-0 max-w-2xl">
+            <FieldSet disabled={busy}><FieldLegend className="sr-only">外观</FieldLegend><FieldGroup>
               <Field><FieldLabel htmlFor="setting-theme">主题</FieldLabel>
                 <NativeSelect id="setting-theme" value={draft.theme} onChange={(e) => {
                   const theme = e.target.value; if (theme === 'light' || theme === 'dark' || theme === 'system') patch('theme', theme)
@@ -52,24 +76,29 @@ export function SettingsDialog({ snapshot, onClose, onSave }: {
                 }}><NativeSelectOption value="block">块状</NativeSelectOption><NativeSelectOption value="underline">下划线</NativeSelectOption><NativeSelectOption value="bar">竖线</NativeSelectOption></NativeSelect></Field>
               {toggle('cursorBlink', '光标闪烁')}
             </FieldGroup></FieldSet>
-            <FieldSet><FieldLegend>终端</FieldLegend><FieldGroup>
+          </TabsContent>
+          <TabsContent value="terminal" className="m-0 max-w-2xl">
+            <FieldSet disabled={busy}><FieldLegend className="sr-only">终端</FieldLegend><FieldGroup>
               {toggle('copyOnSelect', '选中即复制')}{toggle('confirmMultiline', '多行粘贴确认')}{toggle('confirmClose', '关闭运行中标签确认')}
             </FieldGroup></FieldSet>
-            <FieldSet><FieldLegend>会话</FieldLegend><FieldGroup>
+          </TabsContent>
+          <TabsContent value="sessions" className="m-0 max-w-2xl">
+            <FieldSet disabled={busy}><FieldLegend className="sr-only">会话</FieldLegend><FieldGroup>
               <Field><FieldLabel htmlFor="setting-shell">Shell</FieldLabel><NativeSelect id="setting-shell" value={draft.shell} onChange={(e) => {
                 const shell = platformShells(snapshot.platform).find((item) => item === e.target.value); if (shell) patch('shell', shell)
               }}>{platformShells(snapshot.platform).map((shell) => <NativeSelectOption key={shell} value={shell}>{shell === 'default' ? '系统默认' : shell}</NativeSelectOption>)}</NativeSelect></Field>
               <Field><FieldLabel>默认起始目录</FieldLabel><p className="break-all text-sm text-muted-foreground">{draft.directory || '用户主目录'}</p>
-                <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => {
+                <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={() => {
                   void window.novaDirectories?.pick().then((directory) => { if (directory) patch('directory', directory) }).catch(() => setError('无法选择目录。'))
                 }}>选择目录</Button><Button type="button" variant="ghost" onClick={() => patch('directory', '')}>使用主目录</Button></div></Field>
               {numeric('maxSessions', '最大会话数', 1, 8, 1)}{toggle('confirmExit', '退出确认')}
             </FieldGroup></FieldSet>
-          </FieldGroup>
+          </TabsContent>
         </div>
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-        <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button><Button type="submit" disabled={busy}>{busy ? '保存中…' : '保存设置'}</Button></DialogFooter>
+        <Separator />
+        <div className="flex shrink-0 justify-end gap-2 px-5 py-4 sm:px-8"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>取消</Button><Button type="submit" disabled={busy}>{busy ? '保存中…' : '保存设置'}</Button></div>
       </form>
-    </DialogContent>
-  </Dialog>
+    </Tabs>
+  </section>
 }

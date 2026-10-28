@@ -15,13 +15,14 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 
 const TAB_DRAG = 'application/x-novaterminal-tab'
 
-export function TerminalWorkspace({ dark, settings, platform, onSettings, actionContainer }: { dark: boolean; settings: Settings; platform: Platform; onSettings: () => void; actionContainer: HTMLElement | null }) {
+export function TerminalWorkspace({ dark, settings, platform, visible, onSettings, actionContainer }: { dark: boolean; settings: Settings; platform: Platform; visible: boolean; onSettings: () => void; actionContainer: HTMLElement | null }) {
   const [state, dispatch] = useReducer(terminalTabsReducer, initialTerminalTabs)
   const dragging = useRef<string | null>(null)
   const activeBeforeDrag = useRef<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; position: 'before' | 'after' } | null>(null)
   const [phases, setPhases] = useState<Record<string, Phase>>({})
   const [confirm, setConfirm] = useState<{ kind: 'tab'; id: string } | { kind: 'exit'; id: number } | null>(null)
+  const exitFocus = useRef<{ id: number; element: HTMLElement | null } | null>(null)
   const [notice, setNotice] = useState('')
   const tabsContainer = useRef<HTMLDivElement>(null)
   const reportPhase = useCallback((id: string, phase: Phase) => {
@@ -37,6 +38,8 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
     else closeTab(id)
   }, [settings.confirmClose, phases, closeTab])
   useEffect(() => window.novaExit?.onRequest((id) => {
+    // Repeated ACK probes must not replace the original focus with a dialog button.
+    if (activeCount && exitFocus.current?.id !== id) exitFocus.current = { id, element: document.activeElement instanceof HTMLElement ? document.activeElement : null }
     void window.novaExit?.reply(id, activeCount ? 'ack' : 'exit')
     if (activeCount) setConfirm((current) => current?.kind === 'exit' && current.id === id ? current : { kind: 'exit', id })
   }), [activeCount])
@@ -51,7 +54,7 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
   }, [notice])
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.repeat || composing(event) || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
+      if (!visible || event.repeat || composing(event) || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
       const target = event.target
       const inTerminal = target instanceof Element && Boolean(target.closest('.xterm'))
       if (!inTerminal && state.tabs.length > 0) return
@@ -73,7 +76,7 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [state, settings.maxSessions, platform, onSettings, requestClose])
+  }, [state, settings.maxSessions, platform, visible, onSettings, requestClose])
   const reconnect = (id: string) => {
     const tab = state.tabs.find((item) => item.id === id)
     if (!tab || activePhase(phases[id] ?? 'connecting')) return
@@ -113,7 +116,11 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
         if (!open) { if (confirm?.kind === 'exit') void window.novaExit?.reply(confirm.id, 'cancel'); setConfirm(null) }
       }}>
         <AlertDialogContent onEscapeKeyDown={(event) => { if (composing(event)) event.preventDefault() }}
-          onCloseAutoFocus={(event) => { event.preventDefault(); document.querySelector<HTMLTextAreaElement>('[role="tabpanel"][data-state="active"] .xterm-helper-textarea')?.focus() }}>
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            if (!visible) exitFocus.current?.element?.focus()
+            else document.querySelector<HTMLTextAreaElement>('[role="tabpanel"][data-state="active"] .xterm-helper-textarea')?.focus()
+          }}>
           <AlertDialogHeader><AlertDialogTitle>{confirm?.kind === 'exit' ? '退出 NovaTerminal？' : '关闭运行中的会话？'}</AlertDialogTitle>
             <AlertDialogDescription>{confirm?.kind === 'exit' ? `仍有 ${activeCount} 个会话活动，退出会断开全部会话。` : '关闭会断开此会话并清除终端输出，已保存的连接不受影响。'}</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => {
@@ -198,7 +205,7 @@ export function TerminalWorkspace({ dark, settings, platform, onSettings, action
           {state.tabs.map((tab) => (
             // Keep background xterm instances and sessions alive; only closing removes them.
             <TabsContent key={tab.id} value={tab.id} forceMount className="min-h-0 data-[state=active]:flex data-[state=inactive]:hidden">
-              <TerminalSession key={`${tab.id}-${tab.generation ?? 0}`} dark={dark} settings={settings} active={state.activeId === tab.id} label={tab.label} target={tab.target}
+              <TerminalSession key={`${tab.id}-${tab.generation ?? 0}`} dark={dark} settings={settings} active={visible && state.activeId === tab.id} label={tab.label} target={tab.target}
                 onPhase={(phase) => reportPhase(tab.id, phase)} onReconnect={() => reconnect(tab.id)} />
             </TabsContent>
           ))}

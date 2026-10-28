@@ -61,7 +61,7 @@ npm run test:package
 | `src/main/exit-coordinator.ts` | 退出请求去重、界面应答超时和取消 |
 | `src/shared/connection-transfer.ts` | 公开配置导出、导入校验和预览合并 |
 | `src/shared/terminal-interactions.ts` | 快捷键 / IME 守卫、剪贴板上限及外链校验 |
-| `src/renderer/src/components/settings-dialog.tsx`、`terminal-search.tsx` | 设置草稿表单与每标签搜索 |
+| `src/renderer/src/components/settings-page.tsx`、`terminal-search.tsx` | 分类设置页面、草稿表单与每标签搜索 |
 | `src/main/index.ts`、`src/preload/index.ts` | 桌面窗口、本地资源协议和受限桥接 |
 | `src/main/security.ts`、`src/main/sessions.ts` | IPC 来源 / 参数 / 归属校验、会话限额与清理 |
 | `src/server/session-worker.ts` | 独立进程持有本地 PTY 或 SSH 会话，共用协议及背压 |
@@ -86,6 +86,8 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
 ## 设置与终端生命周期
 
 设置存储使用用户数据目录 `settings/desktop.json` 或开发模式的 `settings/development.json`，格式为 `{version:1,values:{…}}`，读取上限 64 KiB。共享解析器填补缺失字段、剥离未知字段并拒绝无效值。写入同目录临时文件、fsync、rename 成功后才替换内存；损坏文件尝试重命名隔离并提示，首次缺文件正常使用默认值。preload 同步获取受来源校验的初始快照，React 挂载前应用主题，后续通过订阅接收设置和系统主题变化。
+
+设置为应用内独立页面，复用现有纵向 Tabs 导航及表单组件，分为外观、终端和会话。分类共享同一草稿，保存成功才应用并返回，失败保留草稿；返回、取消或非合成过程中的 Esc 均丢弃草稿。保存期间禁用编辑和返回。工作区隐藏且标记 inert，终端与资产状态保持挂载；停用工作区快捷键，将终端标记为非活动以避免后台抢焦点，返回后重新适配并恢复焦点。退出确认仍由挂载中的工作区应答，取消时保留设置草稿并恢复设置焦点。
 
 外观更新修改已有 xterm options 并重新适配尺寸，不重建会话。Shell / 默认目录用于新建；显式本地资产目录优先。上限默认 4、范围 1–8，renderer 对所有保留标签计数，主进程对待启动、运行和正在关闭的资源计数。降低上限不清理存量，回收未完成可能暂时拒绝新建。
 
@@ -161,7 +163,7 @@ npm run test:recovery
 
 当前没有持续集成。自动化测试不能替代系统窗口交互、焦点、后台终端和真实服务器兼容性验证。桌面打包验收脚本当前面向 Windows x64；macOS / Linux 和真实远端 SSH 需单独验收。自绘最大化按钮不提供原生窗口按钮的悬停贴靠菜单，Windows 可使用系统快捷键贴靠窗口。冒烟截图保存在忽略提交的 `test-results/` 中。
 
-`test:p0` 使用真实 Electron / PTY、Electron 键鼠输入和系统文本剪贴板，检查设置取消 / 保存、系统主题事件、720×480 布局、已有终端字号、动态上限、快捷键、搜索、复制、超限粘贴、多行取消、显式重连、导入回滚 / 导出及退出去重 / 取消。文件对话框返回值和外部浏览器调用使用测试替身；系统主题通过 Electron nativeTheme 模拟。可加 `--dev` 或指定 ASAR 入口重跑 `scripts/test-desktop.mjs --p0`。
+`test:p0` 使用真实 Electron / PTY、Electron 键鼠输入和系统文本剪贴板，检查设置分类草稿、返回 / 取消 / Esc 丢弃、保存失败保留、设置期间后台输出及退出取消、系统主题事件、720×480 布局、已有终端字号、动态上限、快捷键、搜索、复制、超限粘贴、多行取消、显式重连、导入回滚 / 导出及退出去重 / 取消。文件对话框返回值和外部浏览器调用使用测试替身；系统主题通过 Electron nativeTheme 模拟，保存失败仅在测试进程注入文件替换故障。可加 `--dev` 或指定 ASAR 入口重跑 `scripts/test-desktop.mjs --p0`。
 
 `test:acceptance` 补充 Windows 专项交互：通过 Electron `sendInputEvent` 拖选并检查只在松开时复制；使用真实 PowerShell 长命令检查有选区 Ctrl+C 复制、清屏后无选区 Ctrl+C 中断；通过右键菜单粘贴中文 / emoji；检查搜索前后跳转、大小写、正则及表单快捷键隔离；点击实际渲染链接并验证鼠标报告模式下需 Ctrl 修饰键；检查 cmd 命令执行、PowerShell 7 不可用及失效目录不回退。链接点击测试替换 `shell.openExternal`，不默认启动浏览器。可加 `--dev` 或 ASAR 入口重跑 `scripts/test-desktop.mjs --acceptance`。测试读写并恢复系统文本剪贴板，不保证恢复图片等其他剪贴板格式。
 
