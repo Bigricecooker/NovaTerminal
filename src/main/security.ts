@@ -1,5 +1,5 @@
 import { resolve, relative, isAbsolute } from 'node:path'
-import { parseClientMessage } from '../shared/terminal-protocol.ts'
+import { parseDesktopMessage } from '../shared/terminal-input.ts'
 import type { WindowAction } from '../shared/desktop-api.ts'
 
 export const APP_URL = 'app://novaterminal/index.html'
@@ -20,7 +20,7 @@ export function sessionId(value: unknown): value is string {
 
 export function desktopMessage(value: unknown) {
   if (typeof value !== 'string' || value.length > MAX_IPC_SIZE) return null
-  return parseClientMessage(value)
+  return parseDesktopMessage(value)
 }
 
 export function assetPath(root: string, input: string): string | null {

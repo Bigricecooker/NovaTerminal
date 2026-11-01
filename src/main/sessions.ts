@@ -3,6 +3,7 @@ import { MAX_BUFFER, MAX_SESSIONS, SSH_START_TIMEOUT, parseServerMessage, type S
 import type { DesktopEvent } from '../shared/desktop-api.ts'
 import { desktopMessage, sessionId } from './security.ts'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings.ts'
+import type { InputMessage } from '../shared/terminal-input.ts'
 
 export type SessionProcess = {
   postMessage: (message: unknown) => void
@@ -45,6 +46,15 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
     if (!current || current.owner !== owner) throw new Error('Terminal session unavailable')
     return current
   }
+  const writeInput = (id: string, current: Session, messages: InputMessage[]) => {
+    if (Date.now() - current.inputAt >= 1_000) { current.inputAt = Date.now(); current.inputCount = 0 }
+    const count = messages.reduce((total, message) => total + message.data.length, 0)
+    // Reserve the whole paste before forwarding its first chunk, including bracket markers.
+    if (current.inputCount + count > 131_072) return false
+    current.inputCount += count
+    try { for (const message of messages) current.worker?.postMessage(message); return true }
+    catch { fail(id, '终端传输已关闭。'); return false }
+  }
   const activate = (id: string, current: Session) => {
     const worker = spawn()
     current.worker = worker
@@ -84,6 +94,10 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
       const current = owned(owner, id)
       if (typeof id !== 'string') return false
       let message = desktopMessage(raw)
+      if (Array.isArray(message)) {
+        if (!current.started) { fail(id, '终端收到无效消息。'); return false }
+        return writeInput(id, current, message)
+      }
       if (!message || (message.type !== 'start' && !current.started)) { fail(id, '终端收到无效消息。'); return false }
       if (message.type === 'start') {
         if (current.started) { fail(id, '终端已经启动。'); return false }
@@ -111,11 +125,7 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
         if (message.count > current.pending) { fail(id, '终端输出确认无效。'); return false }
         current.pending -= message.count
       }
-      if (message.type === 'input') {
-        if (Date.now() - current.inputAt >= 1_000) { current.inputAt = Date.now(); current.inputCount = 0 }
-        current.inputCount += message.data.length
-        if (current.inputCount > 131_072) { fail(id, '终端输入过快。'); return false }
-      }
+      if (message.type === 'input') return writeInput(id, current, [message])
       try { current.worker?.postMessage(message); return true }
       catch { fail(id, '终端传输已关闭。'); return false }
     },

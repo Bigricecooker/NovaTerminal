@@ -1,4 +1,5 @@
-import type { ClientMessage, ServerMessage, SshOptions } from './terminal-protocol.ts'
+import type { ServerMessage, SshOptions } from './terminal-protocol.ts'
+import type { DesktopMessage } from './terminal-input.ts'
 import type { Settings, SettingsSnapshot } from './settings.ts'
 import type { ConnectionExport } from './connection-transfer.ts'
 
@@ -24,7 +25,7 @@ export type DesktopEvent = { id: string; message: ServerMessage } | { id: string
 
 export type DesktopTerminalApi = {
   open: () => Promise<string>
-  send: (id: string, message: ClientMessage) => Promise<boolean>
+  send: (id: string, message: DesktopMessage) => Promise<boolean>
   close: (id: string) => Promise<void>
   onEvent: (listener: (event: DesktopEvent) => void) => () => void
 }

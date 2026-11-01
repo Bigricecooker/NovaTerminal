@@ -233,7 +233,7 @@ app.on('browser-window-created', (_event, window) => {
         const beforeRejectedPaste = Buffer.concat(sshInputBytes).length
         clipboard.readText = () => '\x01'.repeat(65_536)
         await pasteSynthetic()
-        await wait('document.body.textContent.includes("输入超过缓冲限制")')
+        await wait('document.body.textContent.includes("输入超过缓冲或速率限制")')
         await delay(100)
         assert.equal(Buffer.concat(sshInputBytes).length, beforeRejectedPaste, 'Rejected paste must send no partial input')
         clipboard.readText = () => 'NOVA_AFTER_REJECT'
@@ -241,6 +241,24 @@ app.on('browser-window-created', (_event, window) => {
         await wait('window.__smoke.output.includes("ECHO:NOVA_AFTER_REJECT")')
         assert.equal(await evaluate('window.__smoke.events.some(e => e.id === window.__smoke.ssh && (e.closed || e.message?.type === "error"))'), false)
       } finally { clipboard.readText = originalReadText }
+      await delay(1_100)
+      const beforeRateLimitedPaste = Buffer.concat(sshInputBytes).length
+      assert.deepEqual(await evaluate(`(async () => {
+        const text = '\\x1b[200~' + 'x'.repeat(65_536) + '\\x1b[201~';
+        const batch = [];
+        for (let offset = 0; offset < text.length; offset += 16_384) batch.push({type:'input',data:text.slice(offset, offset + 16_384)});
+        return [await window.novaTerminal.send(window.__smoke.ssh, batch), await window.novaTerminal.send(window.__smoke.ssh, batch)];
+      })()`), [true, false])
+      const completePaste = Buffer.from('\x1b[200~' + 'x'.repeat(65_536) + '\x1b[201~')
+      const rateDeadline = Date.now() + 5_000
+      while (Buffer.concat(sshInputBytes).length < beforeRateLimitedPaste + completePaste.length) {
+        assert.ok(Date.now() < rateDeadline, 'Accepted paste must reach SSH in full'); await delay(20)
+      }
+      await delay(100)
+      assert.deepEqual(Buffer.concat(sshInputBytes).subarray(beforeRateLimitedPaste), completePaste, 'Rate refusal must send no part of the second paste')
+      await evaluate('window.novaTerminal.send(window.__smoke.ssh, [{type:"input",data:"NOVA_AFTER_RATE_REFUSAL"}])')
+      await wait('window.__smoke.output.includes("ECHO:NOVA_AFTER_RATE_REFUSAL")')
+      assert.equal(await evaluate('window.__smoke.events.some(e => e.id === window.__smoke.ssh && (e.closed || e.message?.type === "error"))'), false)
       window.setSize(1400, 800)
       await wait(`Number(document.querySelector('[role="tabpanel"][data-state="active"] footer span[aria-label]')?.getAttribute('aria-label').split(' ')[0]) > 100`)
       sshStream.write('\x1b[?1000h')

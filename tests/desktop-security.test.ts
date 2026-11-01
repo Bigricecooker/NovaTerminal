@@ -6,6 +6,7 @@ import { APP_URL, DEV_URL, assetPath, desktopMessage, trustedFrame, windowAction
 import { createDesktopSessions, type SessionProcess } from '../src/main/sessions.ts'
 import type { DesktopEvent } from '../src/shared/desktop-api.ts'
 import { DEFAULT_SETTINGS } from '../src/shared/settings.ts'
+import { terminalInputChunks } from '../src/shared/terminal-input.ts'
 
 test('desktop IPC requires the owning main frame and exact document URL', () => {
   assert.ok(trustedFrame(10, 10, true, APP_URL, APP_URL))
@@ -125,7 +126,7 @@ test('closing an unstarted desktop session releases capacity without spawning a 
   } finally { sessions.dispose() }
 })
 
-test('desktop output overflow and excessive input terminate only the owning session', () => {
+test('desktop output overflow closes only its session and excessive input is refused', () => {
   const children: FakeProcess[] = []
   const sessions = createDesktopSessions(() => { const child = new FakeProcess(); children.push(child); return child }, () => {})
   try {
@@ -140,5 +141,41 @@ test('desktop output overflow and excessive input terminate only the owning sess
     const input = JSON.stringify({ type: 'input', data: 'x'.repeat(16_384) })
     for (let index = 0; index < 8; index++) assert.ok(sessions.send(2, survivor, input))
     assert.equal(sessions.send(2, survivor, input), false)
+    assert.ok(sessions.send(2, survivor, '{"type":"clear"}'), 'Input limits must keep the session alive')
   } finally { sessions.dispose(); for (const child of children) child.kill() }
+})
+
+test('main reserves the complete paste rate before forwarding and allows retries', (t) => {
+  let time = 1_000
+  t.mock.method(Date, 'now', () => time)
+  const worker = new FakeProcess()
+  const events: DesktopEvent[] = []
+  const sessions = createDesktopSessions(() => worker, (_owner, event) => events.push(event))
+  try {
+    const id = sessions.open(1)
+    sessions.send(1, id, '{"type":"start","cols":80,"rows":24}')
+    const paste = '\x1b[200~' + 'x'.repeat(65_536) + '\x1b[201~'
+    const batch = JSON.stringify(Array.from(terminalInputChunks(paste), (data) => ({ type: 'input', data })))
+    assert.throws(() => sessions.send(2, id, batch), /unavailable/)
+    assert.equal(sessions.send(1, id, batch), true)
+    const first = [...worker.sent]
+    assert.equal(sessions.send(1, id, batch), false)
+    assert.deepEqual(worker.sent, first, 'A rejected paste must forward no chunks')
+    assert.equal(sessions.count(), 1)
+    assert.deepEqual(events, [])
+    assert.ok(sessions.send(1, id, '{"type":"input","data":"x"}'), 'Refusal must not consume rate capacity')
+    time += 1_000
+    assert.equal(sessions.send(1, id, batch), true)
+    assert.deepEqual(worker.sent.slice(first.length + 1), first.slice(1), 'Retry must include the entire paste')
+  } finally { sessions.dispose(); worker.kill() }
+})
+
+test('desktop input batches reject invalid tails and oversized or non-input messages', () => {
+  const input = { type: 'input', data: 'safe' }
+  for (const batch of [[], [input, { type: 'clear' }], [input, { type: 'input', data: '\u0100', binary: true }],
+    [input, { type: 'input', data: 'x'.repeat(16_385) }], Array(6).fill(input),
+    Array.from({ length: 5 }, () => ({ type: 'input', data: 'x'.repeat(16_384) })),
+    Array.from({ length: 4 }, () => ({ type: 'input', data: '\x01'.repeat(16_384) })),
+  ]) assert.equal(desktopMessage(JSON.stringify(batch)), null)
+  assert.deepEqual(desktopMessage(JSON.stringify([input])), [input])
 })

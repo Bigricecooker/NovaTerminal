@@ -198,9 +198,9 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     window.addEventListener('resize', scheduleFit)
     const sendInput = (data: string, binary?: true) => {
       if (!ready || ended) return
-      if (!transport.sendInput(data, binary)) {
-        setNotice('输入超过缓冲限制，请稍后分段粘贴。')
-      }
+      void transport.sendInput(data, binary).then((accepted) => {
+        if (!accepted && !disposed && !ended) setNotice('输入超过缓冲或速率限制，请稍后分段粘贴。')
+      })
     }
     const input = terminal.onData((data) => sendInput(data))
     const binaryInput = terminal.onBinary((data) => sendInput(data, true))

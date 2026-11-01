@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, type DesktopCredentialApi, type DesktopDirectoryApi, type DesktopEvent, type DesktopTerminalApi, type DesktopWindowApi, type WindowState } from '../shared/desktop-api.ts'
-import { parseClientMessage } from '../shared/terminal-protocol.ts'
+import { parseDesktopMessage } from '../shared/terminal-input.ts'
 import { SETTINGS_CHANNELS, type DesktopSettingsApi } from '../shared/desktop-api.ts'
 import type { SettingsSnapshot } from '../shared/settings.ts'
 import { CLIPBOARD_CHANNELS, type DesktopClipboardApi } from '../shared/desktop-api.ts'
@@ -59,7 +59,7 @@ const api: DesktopTerminalApi = {
     const raw = JSON.stringify(message)
     const size = raw.length
     const total = (pending.get(id) ?? 0) + size
-    if (total > 262_144 || !parseClientMessage(raw)) throw new Error('Terminal input limit exceeded')
+    if (total > 262_144 || !parseDesktopMessage(raw)) throw new Error('Terminal input limit exceeded')
     pending.set(id, total)
     try { return await ipcRenderer.invoke(DESKTOP_CHANNELS.send, id, raw) }
     finally {
