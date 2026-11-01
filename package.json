@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/fix-pty-permissions.mjs",
     "dev": "node scripts/desktop.mjs --dev",
     "build": "tsc -b && vite build && node scripts/build-desktop.mjs",
     "lint": "eslint .",

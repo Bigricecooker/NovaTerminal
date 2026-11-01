@@ -6,6 +6,8 @@
 
 `node-pty` 是原生模块。若目标平台没有匹配的预构建文件，需要按安装错误和上游构建要求准备工具链。项目 `allowScripts` 允许锁定版本的 `node-pty` 和 esbuild 安装脚本；`ssh2` 的可选原生加速脚本保持禁用。调整版本时一并检查脚本许可，不修改全局 npm 配置。
 
+macOS 安装后由项目 `postinstall` 为当前架构预构建目录及本机构建目录中已有的 `spawn-helper` 补上执行权限，解决 `node-pty` 1.1.0 辅助程序缺少执行位导致的 `posix_spawnp failed`。不修改其他平台或全局文件；权限修改失败会使安装报错。使用 `--ignore-scripts` 安装会跳过此步骤。
+
 主要技术栈为 Electron、Vite、React、TypeScript、Tailwind CSS、shadcn/ui、xterm.js、node-pty 和 ssh2。Electron 及打包工具使用精确版本，运行时首次使用时按上游下载机制获取。打包使用该版本 npm 包提供的 SHA-256 清单验证缓存或下载内容，已有有效缓存时无需重新下载校验清单；网络失败时先检查下载与校验错误，不关闭校验。
 
 ## 桌面开发与打包
@@ -147,6 +149,7 @@ npm run test:recovery
 | `tests/regex-search.test.ts` | 正则大小写、方向、循环查找、Unicode 偏移及无效 / 零宽匹配 |
 | `tests/terminal-transport.test.ts` | 开发期重复挂载、异步创建释放、整批 IPC 输入预留与限流拒绝后继续使用 |
 | `tests/terminal-input.test.ts` | 分块边界的 Unicode 完整性、独立 UTF-8 编码及协议长度限制 |
+| `tests/pty-install.test.ts` | macOS 安装辅助程序权限修复、缺省构建目录与重复执行；其他平台跳过 |
 | `tests/known-hosts.test.ts` | 独立存储实例并发确认、不同指纹竞争、损坏记录与后续写入恢复 |
 | `tests/ssh-server.test.ts` | 首次信任、指纹变化、认证、流解码、背压与连接隔离 |
 | `tests/desktop-security.test.ts` | 桌面来源、主框架、资源路径、会话归属、限额、ACK、批次校验 / 整批速率预留与隔离清理 |

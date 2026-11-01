@@ -2,7 +2,7 @@
 
 本地运行的 SSH 与终端客户端，采用 React、TypeScript 和 shadcn/ui 构建。
 
-项目处于开发阶段，提供 Electron 桌面应用。Windows 支持构建可运行目录包；macOS 和 Linux 尚未验证。当前没有安装器、代码签名或自动更新。
+项目处于开发阶段，提供 Electron 桌面应用。Windows 支持构建可运行目录包；macOS 和 Linux 尚未完成完整平台验收。当前没有安装器、代码签名或自动更新。
 
 ## 功能
 
