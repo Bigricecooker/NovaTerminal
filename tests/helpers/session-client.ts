@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { TestContext } from 'node:test'
 import { createDesktopSessions } from '../../src/main/sessions.ts'
+import type { SftpProgress } from '../../src/shared/sftp.ts'
 import type { ClientMessage, ServerMessage } from '../../src/shared/terminal-protocol.ts'
 
 export async function wait(condition: () => boolean) {
@@ -17,6 +18,7 @@ export async function wait(condition: () => boolean) {
 export function sessionHarness(t: TestContext, directory?: string) {
   const clients = new Map<string, { receive: (message: ServerMessage) => void; closed: () => void }>()
   const exits: Promise<void>[] = []
+  const progress: SftpProgress[] = []
   const sessions = createDesktopSessions(() => {
     const child = fork(fileURLToPath(new URL('../fixtures/session-worker.ts', import.meta.url)), directory ? [directory] : [], {
       execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
@@ -38,7 +40,7 @@ export function sessionHarness(t: TestContext, directory?: string) {
     const client = clients.get(event.id)
     if ('closed' in event) client?.closed()
     else client?.receive(event.message)
-  })
+  }, undefined, undefined, (_owner, event) => progress.push(event))
   t.after(async () => { await sessions.shutdown(); await Promise.all(exits) })
 
   return {
@@ -68,7 +70,7 @@ export function sessionHarness(t: TestContext, directory?: string) {
         },
       })
       return {
-        messages, send, sendRaw, wait, output: () => output, isOpen: () => open,
+        id, progress: () => progress.filter((event) => event.id === id), sftp: (operation: Parameters<typeof sessions.sftp>[2]) => sessions.sftp(1, id, operation), cancelSftp: () => sessions.cancelSftp(1, id), messages, send, sendRaw, wait, output: () => output, isOpen: () => open,
         close: async () => { sessions.close(1, id); await exited },
         acknowledge: () => {
           acknowledge = true

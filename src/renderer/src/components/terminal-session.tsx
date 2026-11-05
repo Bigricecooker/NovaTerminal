@@ -4,6 +4,7 @@ import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { SftpBrowser } from '@/components/sftp-browser'
 import { TerminalSearch } from '@/components/terminal-search'
 import { createRegexSearch } from '@/lib/regex-search'
 import '@xterm/xterm/css/xterm.css'
@@ -48,6 +49,8 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   const settingsRef = useRef(settings)
   useEffect(() => { settingsRef.current = settings }, [settings])
   const [notice, setNotice] = useState('')
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [filesOpen, setFilesOpen] = useState(false)
   const [selection, setSelection] = useState(false)
   const [searchAddon, setSearchAddon] = useState<SearchControls | null>(null)
   const searchOpenRef = useRef(false)
@@ -235,7 +238,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
       }
     }
     const transport = createTerminalTransport({
-      open: fitTerminal, message: receiveMessage,
+      open: (id) => { setSessionId(id); fitTerminal() }, message: receiveMessage,
       error: () => stop('error', '无法连接终端会话，可能已达会话上限或上个会话仍在清理，请稍后重新连接。'),
       close: () => stop('closed', '连接已断开，可手动重新连接。'),
     }, window.novaTerminal)
@@ -308,6 +311,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
+      {target.kind === 'ssh' && sessionId && filesOpen && <SftpBrowser key={sessionId} sessionId={sessionId} label={label} connected={session.phase === 'running'} onClose={() => { setFilesOpen(false); if (activeRef.current) controls.current?.terminal.focus() }} />}
       {searchAddon && <TerminalSearch {...searchAddon} onClear={clearSearch} onClose={() => {
         clearSearch()
         searchOpenRef.current = false; setSearchAddon(null); controls.current?.terminal.focus()
@@ -355,6 +359,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           <p className="min-w-0 break-all">{session.shell && `${session.shell} · `}{session.detail}</p>
         </div>
         <div className="flex shrink-0 items-center gap-4 font-mono tabular-nums">
+          {target.kind === 'ssh' && <Button size="xs" variant="outline" disabled={session.phase !== 'running' || !sessionId} onClick={() => setFilesOpen(true)}>文件传输</Button>}
           {(session.phase === 'error' || session.phase === 'closed') && <Button size="xs" variant="outline" onClick={onReconnect}>重新连接</Button>}
           {size && <span aria-label={`${size.cols} 列 ${size.rows} 行`}>{size.cols} × {size.rows}</span>}
           <span className="hidden sm:inline">UTF-8</span>

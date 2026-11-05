@@ -8,12 +8,26 @@ import { MAX_COPY } from '../shared/terminal-interactions.ts'
 import { EXIT_CHANNELS, type DesktopExitApi } from '../shared/desktop-api.ts'
 import { LINK_CHANNEL, type DesktopLinkApi } from '../shared/desktop-api.ts'
 import { TRANSFER_CHANNELS, type DesktopTransferApi } from '../shared/desktop-api.ts'
+import { SFTP_CHANNELS, remotePath, type DesktopSftpApi, type SftpProgress } from '../shared/sftp.ts'
 
 function publicFailure(error: unknown, fallback: string): never {
   const message = error instanceof Error ? error.message.replace(/^Error invoking remote method '[^']+': Error: /, '') : ''
   // Known validation messages are localized; filesystem / IPC details stay out of the UI.
   throw new Error(/^[\u4e00-\u9fff]/.test(message) ? message : fallback)
 }
+const sftpApi: DesktopSftpApi = {
+  list: (id, path) => remotePath(path) ? ipcRenderer.invoke(SFTP_CHANNELS.list, id, path).catch((error: unknown) => publicFailure(error, '无法读取远端目录。')) : Promise.reject(new Error('远端目录路径无效。')),
+  upload: (id, path) => remotePath(path) ? ipcRenderer.invoke(SFTP_CHANNELS.upload, id, path).catch((error: unknown) => publicFailure(error, '上传失败，请检查权限和目标文件。')) : Promise.reject(new Error('远端目录路径无效。')),
+  download: (id, path) => remotePath(path) ? ipcRenderer.invoke(SFTP_CHANNELS.download, id, path).catch((error: unknown) => publicFailure(error, '下载失败，请检查权限和目标文件。')) : Promise.reject(new Error('远端文件路径无效。')),
+  cancel: (id) => ipcRenderer.invoke(SFTP_CHANNELS.cancel, id).catch((error: unknown) => publicFailure(error, '无法取消文件操作。')),
+  onProgress: (listener) => {
+    const handler = (_event: IpcRendererEvent, event: SftpProgress) => listener(event)
+    ipcRenderer.on(SFTP_CHANNELS.progress, handler)
+    return () => { ipcRenderer.removeListener(SFTP_CHANNELS.progress, handler) }
+  },
+}
+contextBridge.exposeInMainWorld('novaSftp', sftpApi)
+
 const transferApi: DesktopTransferApi = {
   read: () => ipcRenderer.invoke(TRANSFER_CHANNELS.read).catch((error: unknown) => publicFailure(error, '无法读取连接配置文件，请检查文件权限后重试。')),
   write: (document) => typeof document === 'string' && document.length <= 1_048_576

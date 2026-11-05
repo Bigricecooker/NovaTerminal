@@ -1,6 +1,7 @@
 import type { ServerMessage, SshOptions } from './terminal-protocol.ts'
 import type { DesktopMessage } from './terminal-input.ts'
 import type { Settings, SettingsSnapshot } from './settings.ts'
+import type { DesktopSftpApi } from './sftp.ts'
 import type { ConnectionExport } from './connection-transfer.ts'
 
 export const SETTINGS_CHANNELS = { initial: 'settings:initial', save: 'settings:save', event: 'settings:event' } as const
@@ -51,5 +52,5 @@ export const CREDENTIAL_CHANNELS = { save: 'credential:save', remove: 'credentia
 export type DesktopCredentialApi = { save: (assetId: string, options: SshOptions) => Promise<void>; remove: (assetIds: string[]) => Promise<void>; recover: (document: string) => Promise<void> }
 
 declare global {
-  interface Window { novaConnections?: DesktopTransferApi; novaLinks?: DesktopLinkApi; novaExit?: DesktopExitApi; novaClipboard?: DesktopClipboardApi; novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
+  interface Window { novaSftp?: DesktopSftpApi; novaConnections?: DesktopTransferApi; novaLinks?: DesktopLinkApi; novaExit?: DesktopExitApi; novaClipboard?: DesktopClipboardApi; novaSettings?: DesktopSettingsApi; novaTerminal?: DesktopTerminalApi; novaWindow?: DesktopWindowApi; novaDirectories?: DesktopDirectoryApi; novaCredentials?: DesktopCredentialApi }
 }

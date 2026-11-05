@@ -18,7 +18,8 @@
     "test:recovery": "npm run build && node scripts/test-recovery.mjs",
     "test:p0": "npm run build && node scripts/test-desktop.mjs --p0",
     "test:acceptance": "npm run build && node scripts/test-desktop.mjs --acceptance",
-    "test:package": "node scripts/test-package.mjs"
+    "test:package": "node scripts/test-package.mjs",
+    "test:sftp": "npm run build && node scripts/test-desktop.mjs --sftp"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",

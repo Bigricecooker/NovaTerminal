@@ -4,6 +4,7 @@ import type { DesktopEvent } from '../shared/desktop-api.ts'
 import { desktopMessage, sessionId } from './security.ts'
 import { DEFAULT_SETTINGS, type Settings } from '../shared/settings.ts'
 import type { InputMessage } from '../shared/terminal-input.ts'
+import { sftpEvent, sftpRequest, type SftpRequest, type SftpResult, type SftpProgress } from '../shared/sftp.ts'
 
 export type SessionProcess = {
   postMessage: (message: unknown) => void
@@ -15,9 +16,11 @@ export type SessionProcess = {
 type Session = {
   owner: number; worker?: SessionProcess; started: boolean; pending: number
   inputAt: number; inputCount: number; timer: ReturnType<typeof setTimeout>
+  ssh?: boolean; ready?: boolean
+  file?: { requestId: string; resolve: (result: SftpResult) => void; reject: (error: Error) => void }
 }
 
-export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void, resolveSsh?: (reference: SavedSshConnection) => SshOptions, preferences: () => Pick<Settings, 'maxSessions' | 'shell' | 'directory'> = () => DEFAULT_SETTINGS) {
+export function createDesktopSessions(spawn: () => SessionProcess, deliver: (owner: number, event: DesktopEvent) => void, resolveSsh?: (reference: SavedSshConnection) => SshOptions, preferences: () => Pick<Settings, 'maxSessions' | 'shell' | 'directory'> = () => DEFAULT_SETTINGS, progress: (owner: number, event: SftpProgress) => void = () => {}) {
   const sessions = new Map<string, Session>()
   const slots = new Set<string>()
   // Closing workers retain their slot until exit, including native resource teardown.
@@ -27,6 +30,8 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
     if (!current) return
     sessions.delete(id)
     clearTimeout(current.timer)
+    current.file?.reject(new Error('SSH 会话已关闭，文件操作已取消。'))
+    delete current.file
     const worker = current.worker
     if (!worker) { slots.delete(id); deliver(current.owner, { id, closed: true }); return }
     try { worker.postMessage({ type: 'close' }) } catch { /* Worker already exited. */ }
@@ -67,13 +72,24 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
     })
     worker.on('message', (raw) => {
       if (!sessions.has(id)) return
+      if (sftpEvent(raw)) {
+        const file = current.file
+        if (!file || file.requestId !== raw.requestId) return
+        if (raw.type === 'sftp-progress') progress(current.owner, { id, transferred: raw.transferred, total: raw.total })
+        else {
+          delete current.file
+          if (raw.error || !raw.result) file.reject(new Error(raw.error ?? 'SFTP 响应无效。'))
+          else file.resolve(raw.result)
+        }
+        return
+      }
       const message = parseServerMessage(JSON.stringify(raw))
       if (!message) { fail(id, '终端会话返回无效消息。'); return }
       if (message.type === 'output') {
         current.pending += message.data.length
         if (current.pending > MAX_BUFFER) { fail(id, '终端输出超过缓冲限制。'); return }
       }
-      if (message.type === 'ready') clearTimeout(current.timer)
+      if (message.type === 'ready') { clearTimeout(current.timer); current.ready = true }
       deliver(current.owner, { id, message })
       if (message.type === 'exit' || message.type === 'error') close(id)
     })
@@ -116,6 +132,7 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
           message = { type: 'start', cols: message.cols, rows: message.rows, shell: defaults.shell, ...(cwd ? { cwd } : {}) }
         }
         current.started = true
+        current.ssh = Boolean(message.ssh)
         try { activate(id, current) }
         catch { fail(id, '无法启动终端会话进程。'); return false }
         clearTimeout(current.timer)
@@ -128,6 +145,27 @@ export function createDesktopSessions(spawn: () => SessionProcess, deliver: (own
       if (message.type === 'input') return writeInput(id, current, [message])
       try { current.worker?.postMessage(message); return true }
       catch { fail(id, '终端传输已关闭。'); return false }
+    },
+    sftpAvailable: (owner: number, id: unknown) => {
+      const current = owned(owner, id)
+      if (!current.ssh || !current.ready || !current.worker) throw new Error('文件传输仅适用于已连接的 SSH 会话。')
+      if (current.file) throw new Error('该会话正在处理其他文件操作。')
+    },
+    sftp: (owner: number, id: unknown, operation: Omit<SftpRequest, 'type' | 'requestId'>): Promise<SftpResult> => {
+      const current = owned(owner, id)
+      if (!current.ssh || !current.ready || !current.worker) throw new Error('文件传输仅适用于已连接的 SSH 会话。')
+      if (current.file) throw new Error('该会话正在处理其他文件操作。')
+      const request = { ...operation, type: 'sftp', requestId: randomUUID() }
+      if (!sftpRequest(request)) throw new Error('文件操作参数无效。')
+      return new Promise((resolve, reject) => {
+        current.file = { requestId: request.requestId, resolve, reject }
+        try { current.worker?.postMessage(request) }
+        catch { delete current.file; reject(new Error('SFTP 会话进程不可用。')) }
+      })
+    },
+    cancelSftp: (owner: number, id: unknown) => {
+      const current = owned(owner, id)
+      if (current.file) current.worker?.postMessage({ type: 'sftp-cancel' })
     },
     close: (owner: number, id: unknown) => {
       if (sessionId(id) && !sessions.has(id)) return

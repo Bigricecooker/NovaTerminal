@@ -67,6 +67,8 @@ npm run test:package
 | `src/main/index.ts`、`src/preload/index.ts` | 桌面窗口、本地资源协议和受限桥接 |
 | `src/main/security.ts`、`src/main/sessions.ts` | IPC 来源 / 参数 / 归属校验、会话限额与清理 |
 | `src/server/session-worker.ts` | 独立进程持有本地 PTY 或 SSH 会话，共用协议及背压 |
+| `src/shared/sftp.ts`、`src/server/sftp.ts` | SFTP 协议边界、目录读取与流式传输 |
+| `src/renderer/src/components/sftp-browser.tsx` | 远端目录、系统文件选择、传输进度与取消 |
 | `src/main/session-worker.ts` | Electron utility process 的消息适配 |
 | `src/server/ssh-session.ts`、`src/server/known-hosts.ts` | SSH 会话、主机校验与指纹记录 |
 
@@ -84,6 +86,12 @@ React / xterm.js ⇄ 沙箱 preload ⇄ 主进程 IPC 校验
 主机指纹先写入同目录临时文件，再以硬链接原子发布完整记录；跨会话 / 进程同时确认相同指纹可成功，竞争中的不同指纹或异常记录继续拒绝。文件系统不支持硬链接时阻止首次信任，不退回可能覆盖旧记录的写法；异常中止可能留下仅含公开主机信息的 `.tmp` 文件，它们不会作为信任记录读取。
 
 桌面会话属于创建它的窗口；刷新、渲染进程退出或关闭窗口会清理所属会话。应用正常退出时先请求会话进程关闭，再限时等待退出；关闭中的进程在退出前仍占用资源名额。修改这些行为时需运行生命周期回归测试。
+
+## SFTP 会话
+
+文件传输复用 `ssh-session` 的已认证 Client，每项操作创建独立 SFTP channel。浏览、上传、下载经单独 IPC 进入 `createDesktopSessions`，校验会话归属、SSH 就绪状态与每会话单操作限制；主进程系统对话框决定本地路径，会话进程直接流式读写文件，renderer 只收到有界列表、结果与节流字节进度。主进程不把传输数据转为 JSON，也不把本地路径返回页面。
+
+目录通过 opendir / readdir(handle) 逐批读取，兼容当前 ssh2 版本的 EOF 状态码。传输使用 pipeline 和 AbortController；请求空闲 30 秒取消，关闭 SSH 等待取消与临时文件清理，再结束 utility process。上传先独占写临时文件再用标准 SFTP rename；下载先写同目录临时文件再通过 link 非覆盖发布。安全边界与故障残留见安全说明。
 
 ## 设置与终端生命周期
 
@@ -132,6 +140,7 @@ npm run check
 npm test
 npm run build
 npm run test:desktop
+npm run test:sftp
 npm run test:sidebar
 npm run test:p0
 npm run test:acceptance
@@ -140,6 +149,7 @@ npm run test:recovery
 
 | 测试文件 | 主要覆盖 |
 | --- | --- |
+| `tests/sftp.test.ts` | SFTP 字段边界、真实本机协议传输、同名保护、取消 / 关闭及失败隔离 |
 | `tests/assets.test.ts` | 资产字段、数量、层级、引用、搜索、重命名、移动 / 删除子树、展开规则与存储边界 |
 | `tests/terminal-tabs.test.ts` | 标签增删、选择、上限、排序及会话身份保留 |
 | `tests/terminal-session.test.ts` | 桌面会话管理下的协议拒绝、真实本地 Shell、尺寸、背压与关闭隔离 |
@@ -175,6 +185,10 @@ npm run test:recovery
 `test:recovery` 使用独立用户数据目录和真实 Electron，检查同目录第二实例退出 / 原窗口恢复 / 重启配置保留；在 500 项人工 SSH 资产和系统加密记录中，分别于新记录写入后、公开配置提交后中断 renderer，检查重新加载回收余量且可继续编辑；损坏资产文档不清理密文。高回溯正则 `(a+)+$` 对 40 个 `a` 加 `!` 的真实 PTY 输出应超时，界面仍能执行心跳并继续普通正则搜索；通过复制选区检查软换行、中文、emoji 与组合字符映射，并恢复原文本剪贴板（不保留图片等格式）。故障注入和 DOM 合成事件仅位于测试桥接，不等同于物理键鼠或断电持久性测试。可用 `node scripts/test-recovery.mjs --dev` 验证开发页面。
 
 性能验收需另覆盖最大回滚和 8 会话组合。单个高回溯表达式的超时回归不能作为全部大缓冲区容量与搜索性能通过的依据。系统主题模拟也不能代替启动视觉闪烁与真实系统主题操作的验收。
+
+`npm run test:sftp` 构建并运行真实 Electron，使用与 Node 集成共用的本机内存 SFTP 协议服务，验证 SSH 指纹在认证之前确认、目录导航、选择器取消、上传下载字节一致、进度、同名保护、取消清理及终端继续交互，并保存深浅主题截图。脚本将 TypeScript 测试服务打包到忽略的 `test-results/`。文件选择器由测试返回值替代，界面按钮使用 DOM 合成点击，不代表物理键鼠或原生选择器人工验收。
+
+`tests/sftp.test.ts` 驱动正式会话管理器和会话核心，另覆盖空文件、恶意名称过滤、目录上限、SFTP 不支持、传输中取消 / 关闭以及本地和远端临时文件清理；归属与未就绪拒绝另在桌面安全测试覆盖。真实外部 SFTP 服务、Windows / Linux、非硬链接文件系统、大文件容量与故障断网残留仍需专项验证。
 
 ## 桌面交互测试
 

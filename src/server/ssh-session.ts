@@ -3,15 +3,19 @@ import { StringDecoder } from 'node:string_decoder'
 import ssh2, { type ClientChannel, type ConnectConfig } from 'ssh2'
 import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, SSH_START_TIMEOUT, type ClientMessage, type ServerMessage, type SshOptions } from '../shared/terminal-protocol.ts'
 import type { KnownHosts } from './known-hosts.ts'
+import { createSftpOperations } from './sftp.ts'
+import type { SftpEvent, SftpRequest } from '../shared/sftp.ts'
 
 const { Client } = ssh2
 
 export function createSshSession(
   options: SshOptions, cols: number, rows: number,
   knownHosts: KnownHosts, send: (message: ServerMessage) => void,
+  sendSftp: (event: SftpEvent) => void,
 ) {
   const { host, port, username } = options
   const client = new Client()
+  const files = createSftpOperations(client, sendSftp)
   let channel: ClientChannel | undefined
   let finished = false
   let pending = 0
@@ -22,17 +26,18 @@ export function createSshSession(
   const stdoutDecoder = new StringDecoder('utf8')
   const stderrDecoder = new StringDecoder('utf8')
 
-  const close = () => {
-    if (finished) return
+  let closing: Promise<void> | undefined
+  const close = (): Promise<void> => {
+    if (closing) return closing
     finished = true
     clearInterval(watchdog)
     verification = undefined
-    channel?.destroy()
-    client.destroy()
+    closing = files.close().finally(() => { channel?.destroy(); client.destroy() })
+    return closing
   }
   const fail = (message: string) => {
     if (finished) return
-    close()
+    void close()
     send({ type: 'error', message })
   }
   const output = (data: string) => {
@@ -102,7 +107,7 @@ export function createSshSession(
         if (finished) return
         for (const decoder of [stdoutDecoder, stderrDecoder]) output(decoder.end())
         if (finished) return
-        close()
+        void close()
         send({ type: 'exit', code: exitCode })
       })
     })
@@ -117,6 +122,11 @@ export function createSshSession(
 
   return {
     close,
+    sftp: (request: SftpRequest) => {
+      if (finished || !channel) { sendSftp({ type: 'sftp-result', requestId: request.requestId, error: 'SSH 会话尚未就绪或已关闭。' }); return }
+      files.request(request)
+    },
+    cancelSftp: files.cancel,
     handle: (message: ClientMessage) => {
       if (finished) return
       if (message.type === 'host-key-response') {

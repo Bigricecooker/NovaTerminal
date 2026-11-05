@@ -7,9 +7,10 @@ import { HIGH_WATER, LOW_WATER, MAX_BUFFER, MAX_INPUT, parseClientMessage, type 
 import { createKnownHosts, type KnownHosts } from './known-hosts.ts'
 import { createSshSession, type SshSession } from './ssh-session.ts'
 import { resolveLocalShell } from './local-shell.ts'
+import { sftpRequest, type SftpEvent } from '../shared/sftp.ts'
 
 export type WorkerTransport = {
-  send: (message: ServerMessage, callback: (error: Error | null) => void) => void
+  send: (message: ServerMessage | SftpEvent, callback: (error: Error | null) => void) => void
   onMessage: (callback: (message: unknown) => void) => void
   onDisconnect: (callback: () => void) => void
 }
@@ -24,7 +25,7 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
   let ending = false
   let lastAck = Date.now()
 
-  function send(message: ServerMessage, callback?: () => void) {
+  function send(message: ServerMessage | SftpEvent, callback?: () => void) {
     transport.send(message, (error) => {
       if (error) shutdown()
       else callback?.()
@@ -35,12 +36,12 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
     if (finished) return
     finished = true
     clearInterval(watchdog)
-    ssh?.close()
+    const closing = ssh?.close()
     for (const subscription of subscriptions) subscription.dispose()
     subscriptions = []
     try { pty?.resume(); pty?.kill() } catch { /* The shell may already have exited. */ }
     // End the owning process to release node-pty's native worker threads and handles.
-    process.exit(0)
+    void Promise.resolve(closing).finally(() => process.exit(0))
   }
 
   function fail(message: string) {
@@ -58,6 +59,12 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
     if (finished) return
     if (typeof raw === 'object' && raw !== null && 'type' in raw && raw.type === 'close') { shutdown(); return }
     if (ending) return
+    if (sftpRequest(raw)) {
+      if (ssh) ssh.sftp(raw)
+      else send({ type: 'sftp-result', requestId: raw.requestId, error: '文件传输仅适用于已连接的 SSH 会话。' })
+      return
+    }
+    if (typeof raw === 'object' && raw !== null && 'type' in raw && raw.type === 'sftp-cancel') { ssh?.cancelSftp(); return }
     const message = parseClientMessage(JSON.stringify(raw))
     if (!message || (message.type !== 'start' && !pty && !ssh)) { fail('终端收到无效消息。'); return }
     try {
@@ -69,7 +76,7 @@ export function runSessionWorker(transport: WorkerTransport, knownHosts: KnownHo
           if (message.ssh) {
             ssh = createSshSession(message.ssh, message.cols, message.rows, knownHosts, (output) => {
               send(output, output.type === 'error' || output.type === 'exit' ? shutdown : undefined)
-            })
+            }, (output) => send(output))
             return
           }
           const windows = process.platform === 'win32'

@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, shell, utilityProcess } from 'electron'
-import { join } from 'node:path'
+import { join, basename, posix } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { open as openFile } from 'node:fs/promises'
 import { DESKTOP_CHANNELS, WINDOW_CHANNELS, DIRECTORY_CHANNEL, CREDENTIAL_CHANNELS, SETTINGS_CHANNELS, CLIPBOARD_CHANNELS, LINK_CHANNEL, EXIT_CHANNELS, TRANSFER_CHANNELS } from '../shared/desktop-api.ts'
@@ -13,6 +13,7 @@ import { MAX_COPY, MAX_PASTE, externalUrl } from '../shared/terminal-interaction
 import { createExitCoordinator } from './exit-coordinator.ts'
 import { MAX_TRANSFER_BYTES, exportConnections, parseConnectionImport } from '../shared/connection-transfer.ts'
 import { parseAssetDocument } from '../shared/assets.ts'
+import { SFTP_CHANNELS, remotePath, remoteName } from '../shared/sftp.ts'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 app.setName('NovaTerminal')
@@ -47,6 +48,9 @@ const sessions = createDesktopSessions(
   },
   (reference) => credentialStore().load(reference),
   () => settings.get(),
+  (owner, event) => {
+    if (window && !window.isDestroyed() && window.webContents.id === owner && !window.webContents.isDestroyed()) window.webContents.send(SFTP_CHANNELS.progress, event)
+  },
 )
 const exit = createExitCoordinator((id) => {
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(EXIT_CHANNELS.request, id)
@@ -205,6 +209,41 @@ if (primaryInstance) void app.whenReady().then(async () => {
       headers.set('Content-Security-Policy', csp)
       return new Response(response.body, { status: response.status, headers })
     } catch { return new Response(null, { status: 404 }) }
+  })
+  let pickingSftpFile = false
+  ipcMain.handle(SFTP_CHANNELS.list, (event, id: unknown, path: unknown) => {
+    const owner = authorize(event)
+    if (!remotePath(path)) throw new Error('远端目录路径无效。')
+    return sessions.sftp(owner, id, { operation: 'list', path })
+  })
+  ipcMain.handle(SFTP_CHANNELS.cancel, (event, id: unknown) => sessions.cancelSftp(authorize(event), id))
+  for (const operation of ['upload', 'download'] as const) ipcMain.handle(SFTP_CHANNELS[operation], async (event, id: unknown, path: unknown) => {
+    const owner = authorize(event)
+    sessions.sftpAvailable(owner, id)
+    if (!remotePath(path)) throw new Error('远端文件路径无效。')
+    const current = window
+    if (!current || pickingSftpFile) throw new Error('请先完成当前文件选择。')
+    pickingSftpFile = true
+    try {
+      let localPath: string | undefined
+      if (operation === 'upload') {
+        const chosen = await dialog.showOpenDialog(current, { title: '上传文件', properties: ['openFile'] })
+        if (chosen.canceled) return null
+        localPath = chosen.filePaths[0]
+        if (!localPath || !remoteName(basename(localPath))) throw new Error('文件名不支持上传。')
+      } else {
+        const name = posix.basename(path)
+        if (!remoteName(name)) throw new Error('远端文件名无效。')
+        // Remote names are only a suggestion, never a local filesystem path.
+        const suggested = name.replace(/[<>:"|?*]/g, '_').replace(/[. ]+$/, '')
+        const chosen = await dialog.showSaveDialog(current, { title: '下载文件（请选择未存在的文件名）', defaultPath: suggested || 'download' })
+        if (chosen.canceled) return null
+        localPath = chosen.filePath
+      }
+      authorize(event)
+      if (!localPath || window !== current || current.isDestroyed()) return null
+      return sessions.sftp(owner, id, { operation, path, localPath })
+    } finally { pickingSftpFile = false }
   })
   ipcMain.handle(DESKTOP_CHANNELS.open, (event) => sessions.open(authorize(event)))
   ipcMain.handle(DESKTOP_CHANNELS.send, (event, id: unknown, message: unknown) => sessions.send(authorize(event), id, message))

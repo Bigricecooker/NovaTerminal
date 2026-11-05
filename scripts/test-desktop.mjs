@@ -4,12 +4,15 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname, basename } from 'node:path'
 import { createServer } from 'vite'
+import { build } from 'esbuild'
 
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 delete env.NOVA_DEV_SERVER
 const dev = process.argv.includes('--dev')
 const sidebar = process.argv.includes('--sidebar')
+const sftp = process.argv.includes('--sftp')
+if (sftp) await build({ entryPoints: ['tests/helpers/sftp-fixture.ts'], outfile: 'test-results/sftp-fixture.cjs', bundle: true, platform: 'node', format: 'cjs', packages: 'external' })
 let server
 if (dev) {
   server = await createServer({ logLevel: 'error' })
@@ -20,7 +23,7 @@ const temporary = await mkdtemp(join(tmpdir(), 'novaterminal-desktop-test-'))
 env.APPDATA = temporary
 env.XDG_CONFIG_HOME = temporary
 env.NOVA_TEST_PROFILE = temporary
-const args = [process.argv.includes('--acceptance') ? 'scripts/p0-acceptance.cjs' : process.argv.includes('--p0') ? 'scripts/p0-smoke.cjs' : sidebar ? 'scripts/sidebar-smoke.cjs' : 'scripts/electron-smoke.cjs']
+const args = [sftp ? 'scripts/sftp-smoke.cjs' : process.argv.includes('--acceptance') ? 'scripts/p0-acceptance.cjs' : process.argv.includes('--p0') ? 'scripts/p0-smoke.cjs' : sidebar ? 'scripts/sidebar-smoke.cjs' : 'scripts/electron-smoke.cjs']
 const entry = process.argv.slice(2).find((argument) => !argument.startsWith('--'))
 if (entry) args.push(resolve(entry))
 const child = spawn(electron, args, { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false })

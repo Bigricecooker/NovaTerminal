@@ -41,6 +41,25 @@ class FakeProcess extends EventEmitter implements SessionProcess {
   kill() { this.emit('exit', 0); return true }
 }
 
+test('SFTP requires ready SSH ownership, bounds one operation, and rejects pending work on close', async () => {
+  const worker = new FakeProcess()
+  const sessions = createDesktopSessions(() => worker, () => {})
+  const id = sessions.open(1)
+  try {
+    sessions.send(1, id, JSON.stringify({ type: 'start', cols: 80, rows: 24, ssh: { host: 'host.invalid', port: 22, username: 'user', auth: { method: 'password', password: 'test' } } }))
+    assert.throws(() => sessions.sftp(1, id, { operation: 'list', path: '.' }), /已连接/)
+    worker.emit('message', { type: 'ready', shell: 'ssh' })
+    assert.throws(() => sessions.sftp(2, id, { operation: 'list', path: '.' }), /unavailable/)
+    assert.throws(() => sessions.cancelSftp(2, id), /unavailable/)
+    assert.throws(() => sessions.sftp(1, id, { operation: 'list', path: '\0' }), /参数无效/)
+    const pending = sessions.sftp(1, id, { operation: 'list', path: '.' })
+    const rejected = assert.rejects(pending, /会话已关闭/)
+    assert.throws(() => sessions.sftp(1, id, { operation: 'list', path: '.' }), /其他文件操作/)
+    sessions.close(1, id); worker.kill()
+    await rejected
+  } finally { sessions.dispose(); worker.kill() }
+})
+
 test('main process applies current shell defaults and retains capacity during cleanup after lowering the limit', () => {
   const children: FakeProcess[] = []
   let preferences = { ...DEFAULT_SETTINGS, maxSessions: 2, directory: 'C:\\default' }

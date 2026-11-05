@@ -4,7 +4,7 @@ import { MAX_PASTE } from '../../../shared/terminal-interactions.ts'
 
 import type { DesktopTerminalApi } from '../../../shared/desktop-api.ts'
 
-type Events = { open: () => void; message: (message: ServerMessage) => void; close: () => void; error: () => void }
+type Events = { open: (id: string) => void; message: (message: ServerMessage) => void; close: () => void; error: () => void }
 export type TerminalTransport = { send: (message: ClientMessage) => void; sendInput: (data: string, binary?: true) => Promise<boolean>; close: () => void; isOpen: () => boolean }
 
 export function createTerminalTransport(events: Events, api: DesktopTerminalApi | undefined): TerminalTransport {
@@ -29,7 +29,7 @@ export function createTerminalTransport(events: Events, api: DesktopTerminalApi 
       id = value
       if (disposed) { void api.close(value).catch(() => {}); return }
       ready = true
-      events.open()
+      events.open(value)
     }).catch(() => { if (!disposed) events.error() })
   })
   const send = (message: ClientMessage) => {
