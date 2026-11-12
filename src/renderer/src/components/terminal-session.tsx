@@ -16,6 +16,7 @@ import { createTerminalTransport } from '@/lib/terminal-transport'
 import type { TerminalTarget } from '@/lib/terminal-tabs'
 import { FONT_STACKS, type Settings } from '@shared/settings'
 import { MAX_COPY, MAX_PASTE, composing, externalUrl, phaseLabels, type Phase } from '@shared/terminal-interactions'
+import { sshWorkingDirectory } from '@shared/sftp'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog'
 
@@ -51,6 +52,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
   const [notice, setNotice] = useState('')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [filesOpen, setFilesOpen] = useState(false)
+  const [terminalDirectory, setTerminalDirectory] = useState<string | null>(null)
   const [selection, setSelection] = useState(false)
   const [searchAddon, setSearchAddon] = useState<SearchControls | null>(null)
   const searchOpenRef = useRef(false)
@@ -93,6 +95,13 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
     let ended = false
     let started = false
     let ready = false
+    const directoryReport = target.kind === 'ssh' ? terminal.parser.registerOscHandler(7, (report) => {
+      if (ready && !ended && !disposed) {
+        const path = sshWorkingDirectory(report, target.host)
+        if (path !== null) setTerminalDirectory(path)
+      }
+      return true
+    }) : undefined
     let frame = 0
     let timeout = 0
     let selecting = false
@@ -271,6 +280,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
       transport.close()
       input.dispose()
       binaryInput.dispose()
+      directoryReport?.dispose()
       regexSearch.cancel()
       terminal.dispose()
       controls.current = null
@@ -311,7 +321,6 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={label}>
-      {target.kind === 'ssh' && sessionId && filesOpen && <SftpBrowser key={sessionId} sessionId={sessionId} label={label} connected={session.phase === 'running'} onClose={() => { setFilesOpen(false); if (activeRef.current) controls.current?.terminal.focus() }} />}
       {searchAddon && <TerminalSearch {...searchAddon} onClear={clearSearch} onClose={() => {
         clearSearch()
         searchOpenRef.current = false; setSearchAddon(null); controls.current?.terminal.focus()
@@ -338,8 +347,9 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           </Alert>
         </div>
       )}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
       <ContextMenu><ContextMenuTrigger asChild>
-      <div className="relative min-h-0 flex-1 bg-terminal-background">
+      <div className="relative min-h-0 min-w-0 flex-1 bg-terminal-background">
         <div ref={container} className="absolute inset-0 overflow-hidden p-3 sm:p-4" aria-label={`${label}输入输出`} />
       </div>
       </ContextMenuTrigger><ContextMenuContent onCloseAutoFocus={(event) => { event.preventDefault(); if (!pasteApproval.current) controls.current?.terminal.focus() }}>
@@ -352,6 +362,12 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           <ContextMenuItem onSelect={() => { clearSearch(); controls.current?.terminal.clear() }}>清屏</ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuContent></ContextMenu>
+      {target.kind === 'ssh' && sessionId && filesOpen && (
+        <SftpBrowser key={sessionId} sessionId={sessionId} label={label} active={active}
+          terminalDirectory={terminalDirectory} connected={session.phase === 'running'}
+          onClose={() => { setFilesOpen(false); if (activeRef.current) controls.current?.terminal.focus() }} />
+      )}
+      </div>
       {notice && <div className="flex shrink-0 items-center justify-between gap-2 px-4 text-xs" role="status">{notice}<Button variant="ghost" size="xs" onClick={() => setNotice('')}>关闭提示</Button></div>}
       <footer className="flex min-h-9 shrink-0 items-center justify-between gap-4 border-t px-4 py-2 text-xs text-muted-foreground">
         <div role="status" aria-live="polite" className="flex min-w-0 items-center gap-2">
@@ -359,7 +375,7 @@ export function TerminalSession({ dark, settings, active, label, target, onPhase
           <p className="min-w-0 break-all">{session.shell && `${session.shell} · `}{session.detail}</p>
         </div>
         <div className="flex shrink-0 items-center gap-4 font-mono tabular-nums">
-          {target.kind === 'ssh' && <Button size="xs" variant="outline" disabled={session.phase !== 'running' || !sessionId} onClick={() => setFilesOpen(true)}>文件传输</Button>}
+          {target.kind === 'ssh' && <Button size="xs" variant="outline" aria-expanded={filesOpen} disabled={session.phase !== 'running' || !sessionId} onClick={() => setFilesOpen(!filesOpen)}>文件传输</Button>}
           {(session.phase === 'error' || session.phase === 'closed') && <Button size="xs" variant="outline" onClick={onReconnect}>重新连接</Button>}
           {size && <span aria-label={`${size.cols} 列 ${size.rows} 行`}>{size.cols} × {size.rows}</span>}
           <span className="hidden sm:inline">UTF-8</span>

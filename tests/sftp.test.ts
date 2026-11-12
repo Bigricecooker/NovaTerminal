@@ -4,9 +4,22 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { remoteName, remotePath, sftpEvent, sftpRequest } from '../src/shared/sftp.ts'
+import { remoteName, remotePath, sftpEvent, sftpRequest, sshWorkingDirectory } from '../src/shared/sftp.ts'
 import { sessionHarness, wait } from './helpers/session-client.ts'
 import { sftpFixture } from './helpers/sftp-fixture.ts'
+
+test('SSH directory reports decode bounded absolute paths on the current host', () => {
+  const host = 'server.example'
+  assert.equal(sshWorkingDirectory('file://SERVER.example/home/%E4%B8%AD%E6%96%87%20%23%25', host), '/home/中文 #%')
+  assert.equal(sshWorkingDirectory('file:///linked/../dir', host), '/linked/../dir')
+  assert.equal(sshWorkingDirectory('file://[::1]/', '::1'), '/')
+  for (const report of ['https://server.example/path', 'file://other.example/path', 'file://user@server.example/path',
+    'file://server.example:22/path', 'file://server.example', 'file:relative', 'file:///a?x', 'file:///a#x',
+    'file:///bad%ZZ', 'file:///bad%00', 'file:///bad%0A', 'file:///bad\tpath', 'file:///bad\\path',
+    'file:///' + 'x'.repeat(4096), 'file:///' + '%61'.repeat(14_000)]) {
+    assert.equal(sshWorkingDirectory(report, host), null)
+  }
+})
 
 test('SFTP validates bounded paths, names, requests, listings and progress', () => {
   assert.ok(remotePath('/home/中文'))

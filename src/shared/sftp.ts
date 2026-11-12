@@ -17,6 +17,20 @@ export type SftpEvent = { type: 'sftp-result'; requestId: string; result?: SftpR
 export function remotePath(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 4_096 && !/\p{Cc}/u.test(value)
 }
+
+export function sshWorkingDirectory(report: string, host: string): string | null {
+  if (report.length > 40_000 || /\p{Cc}/u.test(report)) return null
+  const uri = /^file:\/\/([^/]*)(\/[^?#\\]*)$/i.exec(report)
+  if (!uri?.[2]) return null
+  const expectedHost = host.includes(':') ? `[${host}]` : host
+  if (uri[1] && uri[1].toLowerCase() !== expectedHost.toLowerCase()) return null
+  try {
+    // Let the server resolve path segments so symlink traversal keeps its meaning.
+    const path = decodeURIComponent(uri[2])
+    return remotePath(path) ? path : null
+  } catch { return null }
+}
+
 export function remoteName(value: unknown): value is string {
   return remotePath(value) && value.length <= 255 && value !== '.' && value !== '..' && !/[\\/]/.test(value)
 }

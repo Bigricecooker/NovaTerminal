@@ -9,6 +9,7 @@ export async function sftpFixture() {
   const shells: ServerChannel[] = []
   const directories = new Set(['/', '/home', '/home/test', '/home/test/empty'])
   let slow = false
+  let nextDirectoryGate: Promise<void> | undefined
   let supported = true
   let extraNames: string[] = []
   let authentications = 0
@@ -53,7 +54,13 @@ export async function sftpFixture() {
         channel.on('OPENDIR', (id, path) => {
           const actual = pathOf(path)
           if (!directories.has(actual)) { channel.status(id, status.NO_SUCH_FILE); return }
-          const key = String(++next); handles.set(key, { path: actual, directory: true, read: false }); channel.handle(id, Buffer.from(key))
+          const reply = () => {
+            if (closed) return
+            const key = String(++next); handles.set(key, { path: actual, directory: true, read: false }); channel.handle(id, Buffer.from(key))
+          }
+          const gate = nextDirectoryGate
+          nextDirectoryGate = undefined
+          if (gate) void gate.then(reply); else reply()
         })
         channel.on('READDIR', (id, handle) => {
           const resource = handles.get(handle.toString())
@@ -103,6 +110,7 @@ export async function sftpFixture() {
   return {
     port: address.port, files, shells,
     authCount: () => authentications, channelCount: () => channels,
+    holdNextDirectory: (gate: Promise<void>) => { nextDirectoryGate = gate },
     slow: (value: boolean) => { slow = value }, supported: (value: boolean) => { supported = value }, names: (value: string[]) => { extraNames = value },
     close: async () => { for (const connection of connections) connection.end(); await new Promise<void>((resolve) => server.close(() => resolve())) },
   }
